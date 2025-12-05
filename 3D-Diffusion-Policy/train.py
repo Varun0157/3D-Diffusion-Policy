@@ -104,6 +104,9 @@ class TrainDP3Workspace:
         assert isinstance(dataset, BaseDataset), print(
             f"dataset must be BaseDataset, got {type(dataset)}"
         )
+        import pdb
+
+        pdb.set_trace()
         train_dataloader = DataLoader(dataset, **cfg.dataloader)
         normalizer = dataset.get_normalizer()
 
