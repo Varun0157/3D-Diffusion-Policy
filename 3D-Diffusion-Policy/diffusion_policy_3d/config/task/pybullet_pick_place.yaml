@@ -21,7 +21,7 @@ env_runner:
   n_obs_steps: ${n_obs_steps}
   n_action_steps: ${n_action_steps}
   fps: 10
-  task_name: pick_place
+  # task_name: pick_place we don't need this for pybullet env
 
 dataset:
   _target_: diffusion_policy_3d.dataset.droid_dataset.DroidDataset # same format as droid dataset 
