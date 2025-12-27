@@ -1,0 +1,37 @@
+name: ur5_pick_place
+
+task_name: pick_place
+
+shape_meta: &shape_meta
+  # acceptable types: rgb, low_dim
+  obs:
+    point_cloud:
+      shape: [2500, 3]
+      type: point_cloud
+    agent_pos:
+      shape: [13]
+      type: low_dimx
+  action:
+    shape: [13]
+
+env_runner:
+  _target_: diffusion_policy_3d.env_runner.pybullet_runner.UR5PyBulletRunner
+  n_train: 20
+  max_steps: 50
+  n_obs_steps: ${n_obs_steps}
+  n_action_steps: ${n_action_steps}
+  fps: 10
+  task_name: pick_place
+
+dataset:
+  _target_: diffusion_policy_3d.dataset.droid_dataset.DroidDataset # same format as droid dataset 
+  zarr_path: data/final.zarr
+  horizon: ${horizon}
+  pad_before: ${eval:'${n_obs_steps}-1'}
+  pad_after: ${eval:'${n_action_steps}-1'}
+  seed: 42
+  val_ratio: 0.02
+  max_train_episodes: null 
+
+
+  
