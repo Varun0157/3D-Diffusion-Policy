@@ -10,8 +10,60 @@ from gym import spaces
 import random
 
 
-def downsample_with_fps(points: np.ndarray, num_points: int = 1024):
+def compute_workspace_bounds(pc_xyz, n_std=2):
+    """
+    Compute workspace bounds using mean ± n_std * std
+    
+    Args:
+        pc_xyz: (N, 3) numpy array of point cloud coordinates
+        n_std: number of standard deviations for bounds
+        
+    Returns:
+        WORK_SPACE: [[x_min, x_max], [y_min, y_max], [z_min, z_max]]
+    """
+    if pc_xyz.shape[0] == 0:
+        return None
+    
+    mean = pc_xyz.mean(axis=0)
+    std = pc_xyz.std(axis=0)
+    
+    WORK_SPACE = [
+        [mean[0] - n_std * std[0], mean[0] + n_std * std[0]],  # X
+        [mean[1] - n_std * std[1], mean[1] + n_std * std[1]],  # Y
+        [mean[2] - n_std * std[2], mean[2] + n_std * std[2]]   # Z
+    ]
+    
+    return WORK_SPACE
+
+
+def crop_workspace(pc_xyz, workspace_bounds):
+    """
+    Crop point cloud to workspace bounds
+    
+    Args:
+        pc_xyz: (N, 3) numpy array
+        workspace_bounds: [[x_min, x_max], [y_min, y_max], [z_min, z_max]]
+        
+    Returns:
+        mask: boolean array of valid points
+    """
+    if workspace_bounds is None:
+        return np.ones(pc_xyz.shape[0], dtype=bool)
+    
+    mask = (
+        (pc_xyz[:, 0] >= workspace_bounds[0][0]) & (pc_xyz[:, 0] <= workspace_bounds[0][1]) &
+        (pc_xyz[:, 1] >= workspace_bounds[1][0]) & (pc_xyz[:, 1] <= workspace_bounds[1][1]) &
+        (pc_xyz[:, 2] >= workspace_bounds[2][0]) & (pc_xyz[:, 2] <= workspace_bounds[2][1])
+    )
+    
+    return mask
+
+
+def downsample_with_fps(points: np.ndarray, num_points: int = 2500):
     """Fast point cloud sampling using torch3d"""
+    if points.shape[0] == 0:
+        return np.zeros((num_points, 3), dtype=np.float32)
+    
     points = torch.from_numpy(points).unsqueeze(0).cuda()
     num_points_tensor = torch.tensor([num_points]).cuda()
     # remember to only use coord to sample
@@ -20,40 +72,52 @@ def downsample_with_fps(points: np.ndarray, num_points: int = 1024):
     points = points[sampled_indices.squeeze(0).cpu().numpy()]
     return points
 
+import numpy as np
 
-def depth_to_point_cloud(depth_buffer, view_matrix, proj_matrix, width=224, height=224):
-    """Convert depth buffer to 3D point cloud"""
-    fov = 60
-    near = 0.01
-    far = 3.0
-    
-    # Convert depth buffer to actual depth values
+def depth_to_point_cloud(depth_buffer, view_matrix, proj_matrix, width=224, height=224, 
+                         fov=60, near=0.01, far=3.0, max_depth=2.5):
+    """
+    Convert a PyBullet depth buffer to a 3D point cloud in world coordinates,
+    optionally filtering points beyond max_depth.
+
+    Args:
+        depth_buffer: depth buffer from PyBullet (H x W)
+        view_matrix: PyBullet camera view matrix (16-element list)
+        proj_matrix: PyBullet projection matrix (16-element list)
+        width: image width
+        height: image height
+        fov: field of view (degrees)
+        near: near clipping plane
+        far: far clipping plane
+        max_depth: maximum distance to keep points (in meters) 
+    """
+    # Convert depth buffer to linear depth
     depth_img = far * near / (far - (far - near) * depth_buffer)
-    
-    # Create pixel grid
+
+    # Camera intrinsics
     fx = fy = width / (2 * np.tan(np.radians(fov) / 2))
     cx, cy = width / 2, height / 2
-    
-    # Get view matrix as numpy array
-    view_matrix_np = np.array(view_matrix).reshape(4, 4).T
-    
-    # Create meshgrid for pixel coordinates
+
+    # Pixel coordinates
     u, v = np.meshgrid(np.arange(width), np.arange(height))
-    
-    # Convert to 3D coordinates in camera frame
+
+    # 3D points in camera frame
     z = depth_img
     x = (u - cx) * z / fx
-    y = -(v - cy) * z / fy
-    
-    # Stack into point cloud (N x 3)
+    y = -(v - cy) * z / fy  # negative to flip y-axis
     points_camera = np.stack([x, y, z], axis=-1).reshape(-1, 3)
-    
-    # Transform to world coordinates
-    points_camera_homogeneous = np.concatenate([points_camera, np.ones((points_camera.shape[0], 1))], axis=1)
-    view_matrix_inv = np.linalg.inv(view_matrix_np)
-    points_world = (view_matrix_inv @ points_camera_homogeneous.T).T[:, :3]
-    
+
+    # Transform to world frame
+    points_hom = np.hstack([points_camera, np.ones((points_camera.shape[0], 1))])
+    view_matrix_np = np.array(view_matrix).reshape(4, 4).T
+    points_world = (np.linalg.inv(view_matrix_np) @ points_hom.T).T[:, :3]
+
+    # Filter points beyond max_depth
+    valid_mask = points_world[:, 2] < max_depth
+    points_world = points_world[valid_mask]
+
     return points_world
+
 
 
 class UR5Robotiq85:
@@ -68,7 +132,7 @@ class UR5Robotiq85:
         self.max_velocity = 3
 
     def load(self):
-        self.id = p.loadURDF('./urdf/ur5_robotiq_85.urdf', self.base_pos, self.base_ori, useFixedBase=True)
+        self.id = p.loadURDF('/home/aniruth/Desktop/RRC/3D-Diffusion-Policy/3D-Diffusion-Policy/diffusion_policy_3d/env/pybullet/urdf/ur5_robotiq_85.urdf', self.base_pos, self.base_ori, useFixedBase=True)
         self.__parse_joint_info__()
         self.__setup_mimic_joints__()
 
@@ -123,7 +187,6 @@ class UR5Robotiq85:
         eef_orn_quat = np.array(eef_state[1])  
         eef_orn_euler = np.array(p.getEulerFromQuaternion(eef_orn_quat))  
         
-        # TODO : Print and verify the order of joint states 
         joint_states = []
         for joint_id in self.arm_controllable_joints:
             joint_state = p.getJointState(self.id, joint_id)
@@ -163,12 +226,15 @@ class UR5PickPlaceEnv(gym.Env):
     """
     metadata = {"render.modes": ["rgb_array"], "video.frames_per_second": 10}
 
-    def __init__(self, use_gui=False, num_points=1024, image_size=224):
+    def __init__(self, use_gui=False, num_points=2500, image_size=224, use_workspace_crop=True, workspace_std=2.0):
         self.use_gui = use_gui
         self.num_points = num_points
         self.image_size = image_size
         self.max_steps = 350
         self.current_step = 0
+        self.use_workspace_crop = use_workspace_crop
+        self.workspace_std = workspace_std
+        self.workspace_bounds = None  # Will be computed from first observation
         
         # Connect to PyBullet
         if self.use_gui:
@@ -237,6 +303,9 @@ class UR5PickPlaceEnv(gym.Env):
         """Reset the environment"""
         self.current_step = 0
         self.is_success_flag = False
+        
+        # Reset workspace bounds (will be recomputed)
+        self.workspace_bounds = None
         
         # Remove old cube if exists
         if self.cube_id is not None:
@@ -345,13 +414,36 @@ class UR5PickPlaceEnv(gym.Env):
         point_cloud = depth_to_point_cloud(depth_buffer, view_matrix, proj_matrix, 
                                           self.image_size, self.image_size)
         
-        # Downsample point cloud
-        if point_cloud.shape[0] > self.num_points:
-            point_cloud = downsample_with_fps(point_cloud, self.num_points)
-        elif point_cloud.shape[0] < self.num_points:
-            # Pad if fewer points
-            padding = np.zeros((self.num_points - point_cloud.shape[0], 3))
-            point_cloud = np.vstack([point_cloud, padding])
+        # # Apply workspace cropping if enabled
+        # if self.use_workspace_crop:
+        #     # Compute workspace bounds on first observation
+        #     if self.workspace_bounds is None:
+        #         self.workspace_bounds = compute_workspace_bounds(point_cloud, n_std=self.workspace_std)
+        #         if self.workspace_bounds is not None:
+        #             print(f"Computed workspace bounds (mean ± {self.workspace_std}*std):")
+        #             print(f"  X: [{self.workspace_bounds[0][0]:.3f}, {self.workspace_bounds[0][1]:.3f}]")
+        #             print(f"  Y: [{self.workspace_bounds[1][0]:.3f}, {self.workspace_bounds[1][1]:.3f}]")
+        #             print(f"  Z: [{self.workspace_bounds[2][0]:.3f}, {self.workspace_bounds[2][1]:.3f}]")
+            
+        #     # Crop point cloud to workspace
+        #     if self.workspace_bounds is not None:
+        #         mask = crop_workspace(point_cloud, self.workspace_bounds)
+        #         point_cloud = point_cloud[mask]
+                
+        #         # Debug: print how many points remain
+        #         if self.current_step == 0:
+        #             print(f"  After workspace crop: {point_cloud.shape[0]} points")
+        
+        # # Handle empty point cloud
+        # if point_cloud.shape[0] == 0:
+        #     point_cloud = np.zeros((self.num_points, 3), dtype=np.float32)
+        # # Downsample point cloud
+        # elif point_cloud.shape[0] > self.num_points:
+        #     point_cloud = downsample_with_fps(point_cloud, self.num_points)
+        # elif point_cloud.shape[0] < self.num_points:
+        #     # Pad if fewer points
+        #     padding = np.zeros((self.num_points - point_cloud.shape[0], 3))
+        #     point_cloud = np.vstack([point_cloud, padding])
         
         # Transpose image to channel-first (3, H, W)
         rgb_img = rgb_img.transpose(2, 0, 1)
