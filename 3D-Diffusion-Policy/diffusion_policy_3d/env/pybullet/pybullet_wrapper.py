@@ -204,8 +204,31 @@ class UR5Robotiq85:
         
         return state
 
+    def get_joint_positions(self):
+        """Get current joint positions (6 arm joints + 1 gripper)"""
+        joint_positions = []
+        for joint_id in self.arm_controllable_joints:
+            joint_state = p.getJointState(self.id, joint_id)
+            joint_positions.append(joint_state[0])
+        
+        gripper_state = p.getJointState(self.id, self.mimic_parent_id)
+        joint_positions.append(gripper_state[0])
+        
+        return np.array(joint_positions)
+    
+    def get_joint_limits(self):
+        """Get joint limits for arm joints and gripper"""
+        limits_lower = self.arm_lower_limits + [self.gripper_range[0]]
+        limits_upper = self.arm_upper_limits + [self.gripper_range[1]]
+        return np.array(limits_lower), np.array(limits_upper)
+
     def set_joint_positions(self, joint_positions):
-        """Set joint positions directly (for action execution)"""
+        """
+        Set joint positions directly (for action execution)
+
+        TODO : If the action fails to execute , just `resetJointState` and ignore physics 
+        """
+
         for i, joint_id in enumerate(self.arm_controllable_joints):
             p.setJointMotorControl2(self.id, joint_id, p.POSITION_CONTROL, 
                                    joint_positions[i], maxVelocity=self.max_velocity)
@@ -223,6 +246,8 @@ class UR5PickPlaceEnv(gym.Env):
     
     This environment follows the Gym interface and is compatible with
     MultiStepWrapper for multi-step action execution.
+    
+    Actions are interpreted as DELTAS in joint angles (6 arm joints + 1 gripper).
     """
     metadata = {"render.modes": ["rgb_array"], "video.frames_per_second": 10}
 
@@ -265,11 +290,13 @@ class UR5PickPlaceEnv(gym.Env):
         self.cube_start_pos = None
         
         # Define action and observation spaces
-        # Action: Single step action (13D: eef_pos(3), eef_orn(3), arm_joints(6), gripper(1))
+        # Action: 13D vector where:
+        #   - First 6D (eef_pos(3) + eef_orn(3)): Not used in this version
+        #   - Last 7D (arm_joints(6) + gripper(1)): DELTA joint angles
         # Note: MultiStepWrapper will repeat this to create multi-step actions
         self.action_space = spaces.Box(
-            low=-np.inf,
-            high=np.inf,
+            low=-0.1,  # Maximum delta per step
+            high=0.1,
             shape=(13,),
             dtype=np.float32
         )
@@ -345,23 +372,51 @@ class UR5PickPlaceEnv(gym.Env):
         """
         Execute action and return observation.
         
+        Action is 13D: [eef_pos(3), eef_orn(3), joint_deltas(6), gripper_delta(1)]
+        - First 6D (eef_pos + eef_orn): Not used
+        - Last 7D: DELTA joint angles applied to current joint positions
+        
         Note: MultiStepWrapper will call this multiple times per step,
         so each call should execute a single atomic action.
         
         Args:
-            action: Single action (13D: state or delta depending on mode)
+            action: 13D action vector (only last 7D are used as deltas)
         """
         self.current_step += 1
         
-        # Action is the target state (13D: eef_pos(3), eef_orn(3), joints(6), gripper(1))
-        # We execute by setting joint positions
-        joint_positions = action[6:13]  # Last 7 values are joint angles + gripper
-        self.robot.set_joint_positions(joint_positions)
+        joint_deltas = action[6:13]  # Last 7D: delta for 6 arm joints + 1 gripper
+
+        # Get current joint positions
+        current_joint_positions = self.robot.get_joint_positions()
+        # print("Current joint positions:", current_joint_positions)
+
+        # Apply delta to get target positions
+        target_joint_positions = current_joint_positions + joint_deltas
+        # print("Target joint positions:", target_joint_positions)
+        # Get joint limits
+        joint_limits_lower, joint_limits_upper = self.robot.get_joint_limits()
         
-        # Step simulation (fewer steps since MultiStepWrapper calls this multiple times)
-        for _ in range(5):
+        # # Clip to joint limits
+        # target_joint_positions = np.clip(
+        #     target_joint_positions,
+        #     joint_limits_lower,
+        #     joint_limits_upper
+        # )
+        
+        self.robot.set_joint_positions(target_joint_positions)
+    
+        """
+        We have 2 options here:
+        1. Keep the sim time high and use physics (setJointMotorControl2)
+        2. Lower the sim time step and directly set joint states (resetJointState)
+        """
+
+        for _ in range(2000):
             p.stepSimulation()
-        
+
+        reached_pos = self.robot.get_joint_positions()
+        # print("Reached joint positions after action:", reached_pos)
+
         obs = self._get_obs()
         
         # Check success: cube in tray
@@ -414,36 +469,36 @@ class UR5PickPlaceEnv(gym.Env):
         point_cloud = depth_to_point_cloud(depth_buffer, view_matrix, proj_matrix, 
                                           self.image_size, self.image_size)
         
-        # # Apply workspace cropping if enabled
-        # if self.use_workspace_crop:
-        #     # Compute workspace bounds on first observation
-        #     if self.workspace_bounds is None:
-        #         self.workspace_bounds = compute_workspace_bounds(point_cloud, n_std=self.workspace_std)
-        #         if self.workspace_bounds is not None:
-        #             print(f"Computed workspace bounds (mean ± {self.workspace_std}*std):")
-        #             print(f"  X: [{self.workspace_bounds[0][0]:.3f}, {self.workspace_bounds[0][1]:.3f}]")
-        #             print(f"  Y: [{self.workspace_bounds[1][0]:.3f}, {self.workspace_bounds[1][1]:.3f}]")
-        #             print(f"  Z: [{self.workspace_bounds[2][0]:.3f}, {self.workspace_bounds[2][1]:.3f}]")
+        # Apply workspace cropping if enabled
+        if self.use_workspace_crop:
+            # Compute workspace bounds on first observation
+            if self.workspace_bounds is None:
+                self.workspace_bounds = compute_workspace_bounds(point_cloud, n_std=self.workspace_std)
+                if self.workspace_bounds is not None:
+                    print(f"Computed workspace bounds (mean ± {self.workspace_std}*std):")
+                    print(f"  X: [{self.workspace_bounds[0][0]:.3f}, {self.workspace_bounds[0][1]:.3f}]")
+                    print(f"  Y: [{self.workspace_bounds[1][0]:.3f}, {self.workspace_bounds[1][1]:.3f}]")
+                    print(f"  Z: [{self.workspace_bounds[2][0]:.3f}, {self.workspace_bounds[2][1]:.3f}]")
             
-        #     # Crop point cloud to workspace
-        #     if self.workspace_bounds is not None:
-        #         mask = crop_workspace(point_cloud, self.workspace_bounds)
-        #         point_cloud = point_cloud[mask]
+            # Crop point cloud to workspace
+            if self.workspace_bounds is not None:
+                mask = crop_workspace(point_cloud, self.workspace_bounds)
+                point_cloud = point_cloud[mask]
                 
-        #         # Debug: print how many points remain
-        #         if self.current_step == 0:
-        #             print(f"  After workspace crop: {point_cloud.shape[0]} points")
+                # Debug: print how many points remain
+                if self.current_step == 0:
+                    print(f"  After workspace crop: {point_cloud.shape[0]} points")
         
-        # # Handle empty point cloud
-        # if point_cloud.shape[0] == 0:
-        #     point_cloud = np.zeros((self.num_points, 3), dtype=np.float32)
-        # # Downsample point cloud
-        # elif point_cloud.shape[0] > self.num_points:
-        #     point_cloud = downsample_with_fps(point_cloud, self.num_points)
-        # elif point_cloud.shape[0] < self.num_points:
-        #     # Pad if fewer points
-        #     padding = np.zeros((self.num_points - point_cloud.shape[0], 3))
-        #     point_cloud = np.vstack([point_cloud, padding])
+        # Handle empty point cloud
+        if point_cloud.shape[0] == 0:
+            point_cloud = np.zeros((self.num_points, 3), dtype=np.float32)
+        # Downsample point cloud
+        elif point_cloud.shape[0] > self.num_points:
+            point_cloud = downsample_with_fps(point_cloud, self.num_points)
+        elif point_cloud.shape[0] < self.num_points:
+            # Pad if fewer points
+            padding = np.zeros((self.num_points - point_cloud.shape[0], 3))
+            point_cloud = np.vstack([point_cloud, padding])
         
         # Transpose image to channel-first (3, H, W)
         rgb_img = rgb_img.transpose(2, 0, 1)
