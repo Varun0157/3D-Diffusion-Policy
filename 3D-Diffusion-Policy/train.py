@@ -104,9 +104,7 @@ class TrainDP3Workspace:
         assert isinstance(dataset, BaseDataset), print(
             f"dataset must be BaseDataset, got {type(dataset)}"
         )
-        import pdb
 
-        pdb.set_trace()
         train_dataloader = DataLoader(dataset, **cfg.dataloader)
         normalizer = dataset.get_normalizer()
 
@@ -337,7 +335,11 @@ class TrainDP3Workspace:
 
                 # We can't copy the last checkpoint here
                 # since save_checkpoint uses threads.
-                # therefore at this point the file might have been empty!
+                if (self.epoch % 50 == 0):
+                    # Save checkpoint every 50 epochs
+                    periodic_ckpt_path = os.path.join(self.output_dir, "checkpoints", f"epoch={self.epoch:04d}.ckpt")
+                    self.save_checkpoint(path=periodic_ckpt_path)
+
                 topk_ckpt_path = topk_manager.get_ckpt_path(metric_dict)
 
                 if topk_ckpt_path is not None:
