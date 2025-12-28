@@ -13,49 +13,49 @@ import random
 def compute_workspace_bounds(pc_xyz, n_std=2):
     """
     Compute workspace bounds using mean ± n_std * std
-
+    
     Args:
         pc_xyz: (N, 3) numpy array of point cloud coordinates
         n_std: number of standard deviations for bounds
-
+        
     Returns:
         WORK_SPACE: [[x_min, x_max], [y_min, y_max], [z_min, z_max]]
     """
     if pc_xyz.shape[0] == 0:
         return None
-
+    
     mean = pc_xyz.mean(axis=0)
     std = pc_xyz.std(axis=0)
-
+    
     WORK_SPACE = [
         [mean[0] - n_std * std[0], mean[0] + n_std * std[0]],  # X
         [mean[1] - n_std * std[1], mean[1] + n_std * std[1]],  # Y
         [mean[2] - n_std * std[2], mean[2] + n_std * std[2]]   # Z
     ]
-
+    
     return WORK_SPACE
 
 
 def crop_workspace(pc_xyz, workspace_bounds):
     """
     Crop point cloud to workspace bounds
-
+    
     Args:
         pc_xyz: (N, 3) numpy array
         workspace_bounds: [[x_min, x_max], [y_min, y_max], [z_min, z_max]]
-
+        
     Returns:
         mask: boolean array of valid points
     """
     if workspace_bounds is None:
         return np.ones(pc_xyz.shape[0], dtype=bool)
-
+    
     mask = (
         (pc_xyz[:, 0] >= workspace_bounds[0][0]) & (pc_xyz[:, 0] <= workspace_bounds[0][1]) &
         (pc_xyz[:, 1] >= workspace_bounds[1][0]) & (pc_xyz[:, 1] <= workspace_bounds[1][1]) &
         (pc_xyz[:, 2] >= workspace_bounds[2][0]) & (pc_xyz[:, 2] <= workspace_bounds[2][1])
     )
-
+    
     return mask
 
 
@@ -63,7 +63,7 @@ def downsample_with_fps(points: np.ndarray, num_points: int = 2500):
     """Fast point cloud sampling using torch3d"""
     if points.shape[0] == 0:
         return np.zeros((num_points, 3), dtype=np.float32)
-
+    
     points = torch.from_numpy(points).unsqueeze(0).cuda()
     num_points_tensor = torch.tensor([num_points]).cuda()
     # remember to only use coord to sample
@@ -74,7 +74,7 @@ def downsample_with_fps(points: np.ndarray, num_points: int = 2500):
 
 import numpy as np
 
-def depth_to_point_cloud(depth_buffer, view_matrix, proj_matrix, width=224, height=224,
+def depth_to_point_cloud(depth_buffer, view_matrix, proj_matrix, width=224, height=224, 
                          fov=60, near=0.01, far=3.0, max_depth=2.5):
     """
     Convert a PyBullet depth buffer to a 3D point cloud in world coordinates,
@@ -89,7 +89,7 @@ def depth_to_point_cloud(depth_buffer, view_matrix, proj_matrix, width=224, heig
         fov: field of view (degrees)
         near: near clipping plane
         far: far clipping plane
-        max_depth: maximum distance to keep points (in meters)
+        max_depth: maximum distance to keep points (in meters) 
     """
     # Convert depth buffer to linear depth
     depth_img = far * near / (far - (far - near) * depth_buffer)
@@ -132,7 +132,7 @@ class UR5Robotiq85:
         self.max_velocity = 3
 
     def load(self):
-        # self.id = p.loadURDF('/home/aniruth/Desktop/RRC/3D-Diffusion-Policy/3D-Diffusion-Policy/diffusion_policy_3d/env/pybullet/urdf/ur5_robotiq_85.urdf', self.base_pos, self.base_ori, useFixedBase=True)
+        #self.id = p.loadURDF('/home/aniruth/Desktop/RRC/3D-Diffusion-Policy/3D-Diffusion-Policy/diffusion_policy_3d/env/pybullet/urdf/ur5_robotiq_85.urdf', self.base_pos, self.base_ori, useFixedBase=True)
         self.id = p.loadURDF('/home/cross-emb/3D-Diffusion-Policy/3D-Diffusion-Policy/diffusion_policy_3d/env/pybullet/urdf/ur5_robotiq_85.urdf', self.base_pos, self.base_ori, useFixedBase=True)
         self.__parse_joint_info__()
         self.__setup_mimic_joints__()
@@ -184,26 +184,25 @@ class UR5Robotiq85:
     def get_robot_state(self):
         """Get complete robot state: end-effector pose + joint angles"""
         eef_state = p.getLinkState(self.id, self.eef_id)
-        eef_pos = np.array(eef_state[0])
-        eef_orn_quat = np.array(eef_state[1])
-        eef_orn_euler = np.array(p.getEulerFromQuaternion(eef_orn_quat))
-
+        eef_pos = np.array(eef_state[0]) 
+        eef_orn_quat = np.array(eef_state[1])  
+        eef_orn_euler = np.array(p.getEulerFromQuaternion(eef_orn_quat))  
+        
         joint_states = []
         for joint_id in self.arm_controllable_joints:
             joint_state = p.getJointState(self.id, joint_id)
             joint_states.append(joint_state[0])
-
+        
         gripper_state = p.getJointState(self.id, self.mimic_parent_id)
         gripper_angle = gripper_state[0]
-
+        
         state = np.concatenate([
             eef_pos,
             eef_orn_euler,
             joint_states,
             [gripper_angle]
-
         ])
-
+        
         return state
 
     def get_joint_positions(self):
@@ -212,12 +211,12 @@ class UR5Robotiq85:
         for joint_id in self.arm_controllable_joints:
             joint_state = p.getJointState(self.id, joint_id)
             joint_positions.append(joint_state[0])
-
+        
         gripper_state = p.getJointState(self.id, self.mimic_parent_id)
         joint_positions.append(gripper_state[0])
-
+        
         return np.array(joint_positions)
-
+    
     def get_joint_limits(self):
         """Get joint limits for arm joints and gripper"""
         limits_lower = self.arm_lower_limits + [self.gripper_range[0]]
@@ -226,45 +225,29 @@ class UR5Robotiq85:
 
     def set_joint_positions(self, joint_positions):
         """
-        Set joint positions using high-gain position control
+        Set joint positions directly (for action execution)
+
+        TODO : If the action fails to execute , just `resetJointState` and ignore physics 
         """
-        for i, joint_id in enumerate(self.arm_controllable_joints):
-            p.setJointMotorControl2(
-                self.id, joint_id, 
-                p.POSITION_CONTROL,
-                targetPosition=joint_positions[i],
-                force=500,  # High force
-                maxVelocity=10  # High velocity
-            )
 
+        for i, joint_id in enumerate(self.arm_controllable_joints):
+            p.setJointMotorControl2(self.id, joint_id, p.POSITION_CONTROL, 
+                                   joint_positions[i], maxVelocity=self.max_velocity)
+        
+        # Set gripper if provided
         if len(joint_positions) > self.arm_num_dofs:
             gripper_angle = joint_positions[self.arm_num_dofs]
-            p.setJointMotorControl2(
-                self.id, self.mimic_parent_id,
-                p.POSITION_CONTROL,
-                targetPosition=gripper_angle,
-                force=100
-            )
-        # Ignoring physics and directly setting it !!
-    # Set arm joints DIRECTLY (no physics, instant teleport)
-        for i, joint_id in enumerate(self.arm_controllable_joints):
-            p.resetJointState(self.id, joint_id, joint_positions[i])
+            p.setJointMotorControl2(self.id, self.mimic_parent_id, p.POSITION_CONTROL, 
+                                   targetPosition=gripper_angle)
 
-        # Set gripper
-        if len(joint_positions) > self.arm_num_dofs:
-            gripper_angle = joint_positions[self.arm_num_dofs]
-            p.resetJointState(self.id, self.mimic_parent_id, gripper_angle)
-            
-            # Also set mimic joints
-            for joint_id, multiplier in self.mimic_child_multiplier.items():
-                p.resetJointState(self.id, joint_id, gripper_angle * multiplier)
+
 class UR5PickPlaceEnv(gym.Env):
     """
     PyBullet UR5 Pick and Place Environment
-
+    
     This environment follows the Gym interface and is compatible with
     MultiStepWrapper for multi-step action execution.
-
+    
     Actions are interpreted as DELTAS in joint angles (6 arm joints + 1 gripper).
     """
     metadata = {"render.modes": ["rgb_array"], "video.frames_per_second": 10}
@@ -278,35 +261,35 @@ class UR5PickPlaceEnv(gym.Env):
         self.use_workspace_crop = use_workspace_crop
         self.workspace_std = workspace_std
         self.workspace_bounds = None  # Will be computed from first observation
-
+        
         # Connect to PyBullet
         if self.use_gui:
             self.physics_client = p.connect(p.GUI)
         else:
             self.physics_client = p.connect(p.DIRECT)
-
+        
         p.setGravity(0, 0, -9.8)
         p.setAdditionalSearchPath(pybullet_data.getDataPath())
-
+        
         # Load environment
         self.plane_id = p.loadURDF("plane.urdf")
         self.table_id = p.loadURDF("table/table.urdf", [0.5, 0, 0], p.getQuaternionFromEuler([0, 0, 0]))
         self.tray_pos = [0.5, 0.9, 0.6]
         self.tray_orn = p.getQuaternionFromEuler([0, 0, 0])
         self.tray_id = p.loadURDF("tray/tray.urdf", self.tray_pos, self.tray_orn)
-
+        
         # Load robot
         self.robot = UR5Robotiq85([0, 0, 0.62], [0, 0, 0])
         self.robot.load()
-
+        
         # Camera parameters
         self.tp_cam_eye = [1.1, -0.6, 1.3]
         self.tp_cam_target = [0.5, 0.3, 0.7]
         self.tp_cam_up = [0, 0, 1]
-
+        
         self.cube_id = None
         self.cube_start_pos = None
-
+        
         # Define action and observation spaces
         # Action: 13D vector where:
         #   - First 6D (eef_pos(3) + eef_orn(3)): Not used in this version
@@ -318,7 +301,7 @@ class UR5PickPlaceEnv(gym.Env):
             shape=(13,),
             dtype=np.float32
         )
-
+        
         # Observation space: Single timestep observations
         # Note: MultiStepWrapper will stack these to create multi-step observations
         self.observation_space = spaces.Dict({
@@ -341,67 +324,67 @@ class UR5PickPlaceEnv(gym.Env):
                 dtype=np.uint8
             ),
         })
-
+        
         self.is_success_flag = False
 
     def reset(self):
         """Reset the environment"""
         self.current_step = 0
         self.is_success_flag = False
-
+        
         # Reset workspace bounds (will be recomputed)
         self.workspace_bounds = None
-
+        
         # Remove old cube if exists
         if self.cube_id is not None:
             p.removeBody(self.cube_id)
-
+        
         # Reset robot to rest pose
         target_joint_positions = [0, -1.57, 1.57, -1.5, -1.57, 0.0]
         for i, joint_id in enumerate(self.robot.arm_controllable_joints):
-            p.setJointMotorControl2(self.robot.id, joint_id, p.POSITION_CONTROL,
+            p.setJointMotorControl2(self.robot.id, joint_id, p.POSITION_CONTROL, 
                                    target_joint_positions[i])
-
+        
         # Step simulation to stabilize
         for _ in range(100):
             p.stepSimulation()
-
+        
         # Spawn cube at random location
         self.cube_start_pos = [
-            random.uniform(0.3, 0.7),
-            random.uniform(-0.1, 0.1),
+            random.uniform(0.3, 0.7), 
+            random.uniform(-0.1, 0.1), 
             0.65
         ]
         cube_start_orn = p.getQuaternionFromEuler([0, 0, 0])
         self.cube_id = p.loadURDF("cube_small.urdf", self.cube_start_pos, cube_start_orn)
-
+        
         # Random cube color
         color = [random.random(), random.random(), random.random(), 1.0]
         p.changeVisualShape(self.cube_id, -1, rgbaColor=color)
-
+        
         # Step simulation
         for _ in range(50):
             p.stepSimulation()
-
+        
         obs = self._get_obs()
         return obs
 
     def step(self, action):
         """
         Execute action and return observation.
-
+        
         Action is 13D: [eef_pos(3), eef_orn(3), joint_deltas(6), gripper_delta(1)]
         - First 6D (eef_pos + eef_orn): Not used
         - Last 7D: DELTA joint angles applied to current joint positions
-
+        
         Note: MultiStepWrapper will call this multiple times per step,
         so each call should execute a single atomic action.
-
+        
         Args:
             action: 13D action vector (only last 7D are used as deltas)
         """
         self.current_step += 1
-
+        
         joint_deltas = action[6:13]  # Last 7D: delta for 6 arm joints + 1 gripper
 
         # Get current joint positions
@@ -413,57 +396,57 @@ class UR5PickPlaceEnv(gym.Env):
         # print("Target joint positions:", target_joint_positions)
         # Get joint limits
         joint_limits_lower, joint_limits_upper = self.robot.get_joint_limits()
-
+        
         # # Clip to joint limits
         # target_joint_positions = np.clip(
         #     target_joint_positions,
         #     joint_limits_lower,
         #     joint_limits_upper
         # )
-
+        
         self.robot.set_joint_positions(target_joint_positions)
-
+    
         """
         We have 2 options here:
         1. Keep the sim time high and use physics (setJointMotorControl2)
         2. Lower the sim time step and directly set joint states (resetJointState)
         """
 
-        for _ in range(50):
+        for _ in range(2000):
             p.stepSimulation()
 
         reached_pos = self.robot.get_joint_positions()
         # print("Reached joint positions after action:", reached_pos)
 
         obs = self._get_obs()
-
+        
         # Check success: cube in tray
         reward = 0.0
         done = False
-
+        
         if self.cube_id is not None:
             cube_pos, _ = p.getBasePositionAndOrientation(self.cube_id)
             # Check if cube is in tray region
-            if (abs(cube_pos[0] - self.tray_pos[0]) < 0.2 and
+            if (abs(cube_pos[0] - self.tray_pos[0]) < 0.2 and 
                 abs(cube_pos[1] - self.tray_pos[1]) < 0.2 and
                 abs(cube_pos[2] - self.tray_pos[2]) < 0.1):
                 reward = 1.0
                 self.is_success_flag = True
                 done = True
-
+        
         # Episode timeout
         if self.current_step >= self.max_steps:
             done = True
-
+        
         info = {'is_success': self.is_success_flag}
-
+        
         return obs, reward, done, info
 
     def _get_obs(self):
         """Get current observation"""
         # Get robot state
         agent_pos = self.robot.get_robot_state()
-
+        
         # Capture camera image and point cloud
         view_matrix = p.computeViewMatrix(
             cameraEyePosition=self.tp_cam_eye,
@@ -473,20 +456,20 @@ class UR5PickPlaceEnv(gym.Env):
         proj_matrix = p.computeProjectionMatrixFOV(
             fov=60, aspect=1.0, nearVal=0.01, farVal=3.0
         )
-
+        
         width, height, rgb_img, depth_img, _ = p.getCameraImage(
             self.image_size, self.image_size,
             viewMatrix=view_matrix,
             projectionMatrix=proj_matrix
         )
-
+        
         rgb_img = np.array(rgb_img)[:, :, :3]  # (H, W, 3)
         depth_buffer = np.array(depth_img)
-
+        
         # Convert to point cloud
-        point_cloud = depth_to_point_cloud(depth_buffer, view_matrix, proj_matrix,
+        point_cloud = depth_to_point_cloud(depth_buffer, view_matrix, proj_matrix, 
                                           self.image_size, self.image_size)
-
+        
         # Apply workspace cropping if enabled
         if self.use_workspace_crop:
             # Compute workspace bounds on first observation
@@ -497,16 +480,16 @@ class UR5PickPlaceEnv(gym.Env):
                     print(f"  X: [{self.workspace_bounds[0][0]:.3f}, {self.workspace_bounds[0][1]:.3f}]")
                     print(f"  Y: [{self.workspace_bounds[1][0]:.3f}, {self.workspace_bounds[1][1]:.3f}]")
                     print(f"  Z: [{self.workspace_bounds[2][0]:.3f}, {self.workspace_bounds[2][1]:.3f}]")
-
+            
             # Crop point cloud to workspace
             if self.workspace_bounds is not None:
                 mask = crop_workspace(point_cloud, self.workspace_bounds)
                 point_cloud = point_cloud[mask]
-
+                
                 # Debug: print how many points remain
                 if self.current_step == 0:
                     print(f"  After workspace crop: {point_cloud.shape[0]} points")
-
+        
         # Handle empty point cloud
         if point_cloud.shape[0] == 0:
             point_cloud = np.zeros((self.num_points, 3), dtype=np.float32)
@@ -517,16 +500,16 @@ class UR5PickPlaceEnv(gym.Env):
             # Pad if fewer points
             padding = np.zeros((self.num_points - point_cloud.shape[0], 3))
             point_cloud = np.vstack([point_cloud, padding])
-
+        
         # Transpose image to channel-first (3, H, W)
         rgb_img = rgb_img.transpose(2, 0, 1)
-
+        
         obs_dict = {
             'point_cloud': point_cloud.astype(np.float32),
             'agent_pos': agent_pos.astype(np.float32),
             'image': rgb_img.astype(np.uint8),
         }
-
+        
         return obs_dict
 
     def render(self, mode='rgb_array'):
@@ -539,13 +522,13 @@ class UR5PickPlaceEnv(gym.Env):
         proj_matrix = p.computeProjectionMatrixFOV(
             fov=60, aspect=1.0, nearVal=0.01, farVal=3.0
         )
-
+        
         width, height, rgb_img, _, _ = p.getCameraImage(
             self.image_size, self.image_size,
             viewMatrix=view_matrix,
             projectionMatrix=proj_matrix
         )
-
+        
         rgb_img = np.array(rgb_img)[:, :, :3]
         return rgb_img.astype(np.uint8)
 
