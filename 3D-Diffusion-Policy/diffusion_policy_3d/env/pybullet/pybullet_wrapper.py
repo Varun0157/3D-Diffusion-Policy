@@ -246,18 +246,20 @@ class UR5Robotiq85:
                 force=100
             )
         # Ignoring physics and directly setting it !!
-    # Set arm joints DIRECTLY (no physics, instant teleport)
-        for i, joint_id in enumerate(self.arm_controllable_joints):
-            p.resetJointState(self.id, joint_id, joint_positions[i])
+    # # Set arm joints DIRECTLY (no physics, instant teleport)
+    #     for i, joint_id in enumerate(self.arm_controllable_joints):
+    #         p.resetJointState(self.id, joint_id, joint_positions[i])
 
-        # Set gripper
-        if len(joint_positions) > self.arm_num_dofs:
-            gripper_angle = joint_positions[self.arm_num_dofs]
-            p.resetJointState(self.id, self.mimic_parent_id, gripper_angle)
+    #     # Set gripper
+    #     if len(joint_positions) > self.arm_num_dofs:
+    #         gripper_angle = joint_positions[self.arm_num_dofs]
+    #         p.resetJointState(self.id, self.mimic_parent_id, gripper_angle)
             
-            # Also set mimic joints
-            for joint_id, multiplier in self.mimic_child_multiplier.items():
-                p.resetJointState(self.id, joint_id, gripper_angle * multiplier)
+    #         # Also set mimic joints
+    #         for joint_id, multiplier in self.mimic_child_multiplier.items():
+    #             p.resetJointState(self.id, joint_id, gripper_angle * multiplier)
+
+    
 class UR5PickPlaceEnv(gym.Env):
     """
     PyBullet UR5 Pick and Place Environment

@@ -167,7 +167,7 @@ class UR5PyBulletRunner(BaseRunner):
                 
                 action = np_action_dict['action'].squeeze(0)
                 convert_time = time.time() - convert_start
-                
+                # Step 0: total=17.187s, prep=0.000s, policy=0.089s, convert=0.000s, env_step=17.097s
                 # Step environment
                 env_step_start = time.time()
                 obs, reward, done, info = self.env_train.step(action)
