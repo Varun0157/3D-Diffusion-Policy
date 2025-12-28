@@ -51,7 +51,7 @@ for i in range(1):
     gripper_before = state_before[12]
 
     # -------- RANDOM ACTION --------
-    action = np.random.randn(13)
+    action = np.random.uniform(-0.1, 0.1, size=13)
     action[12] = 0.2  # gripper delta
 
     joint_deltas = action[6:12]
