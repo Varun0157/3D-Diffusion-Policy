@@ -4,7 +4,7 @@ import torch
 import collections
 import tqdm
 from termcolor import cprint
-from diffusion_policy_3d.env import UR5PickPlaceEnv
+from diffusion_policy_3d.env.pybullet_ur5_wrapper import UR5PickPlaceEnv
 from diffusion_policy_3d.gym_util.multistep_wrapper import MultiStepWrapper
 from diffusion_policy_3d.gym_util.video_recording_wrapper import SimpleVideoRecordingWrapper
 
@@ -39,6 +39,8 @@ class UR5PyBulletRunner(BaseRunner):
                  use_gui=False,
                  num_points=1024,
                  image_size=224,
+                 use_workspace_crop=True,
+                 workspace_std=2.0,
                  ):
         super().__init__(output_dir)
         
@@ -59,17 +61,15 @@ class UR5PyBulletRunner(BaseRunner):
             - Single action (13,) -> Multi-step action (n_action_steps, 13)
             
             This wrapper works for ANY gym.Env, including PyBullet environments!
-
-            Takes in `n_obs_steps` = number of observation steps to stack together
-            Takes in `n_action_steps` = number of action steps to execute per policy call
             """
-            
             return MultiStepWrapper(
                 SimpleVideoRecordingWrapper(
                     UR5PickPlaceEnv(
                         use_gui=use_gui,
                         num_points=num_points,
-                        image_size=image_size
+                        image_size=image_size,
+                        use_workspace_crop=use_workspace_crop,
+                        workspace_std=workspace_std,
                     )
                 ),
                 n_obs_steps=n_obs_steps,
@@ -93,6 +93,8 @@ class UR5PyBulletRunner(BaseRunner):
         """
         Run evaluation on both train and test environments
         """
+        import time  # For timing
+        
         device = policy.device
         dtype = policy.dtype
         
@@ -114,15 +116,28 @@ class UR5PyBulletRunner(BaseRunner):
             leave=False, 
             mininterval=self.tqdm_interval_sec
         ):
+            episode_start = time.time()
+            
             # Reset environment
+            reset_start = time.time()
             obs = self.env_train.reset()
+            reset_time = time.time() - reset_start
+            print(f"[Episode {episode_id}] Reset time: {reset_time:.2f}s")
+            
             policy.reset()
             
             done = False
             reward_sum = 0.
             
+            step_times = []
+            policy_times = []
+            env_step_times = []
+            
             for step_id in range(self.max_steps):
+                step_start = time.time()
+                
                 # Prepare observation
+                prep_start = time.time()
                 np_obs_dict = dict(obs)
                 
                 # Device transfer
@@ -130,35 +145,62 @@ class UR5PyBulletRunner(BaseRunner):
                     np_obs_dict,
                     lambda x: torch.from_numpy(x).to(device=device)
                 )
+                prep_time = time.time() - prep_start
                 
                 # Run policy
+                policy_start = time.time()
                 with torch.no_grad():
                     obs_dict_input = {}
                     obs_dict_input['point_cloud'] = obs_dict['point_cloud'].unsqueeze(0)
                     obs_dict_input['agent_pos'] = obs_dict['agent_pos'].unsqueeze(0)
                     
                     action_dict = policy.predict_action(obs_dict_input)
+                policy_time = time.time() - policy_start
+                policy_times.append(policy_time)
                 
                 # Convert action to numpy
+                convert_start = time.time()
                 np_action_dict = dict_apply(
                     action_dict,
                     lambda x: x.detach().to('cpu').numpy()
                 )
                 
                 action = np_action_dict['action'].squeeze(0)
+                convert_time = time.time() - convert_start
                 
                 # Step environment
+                env_step_start = time.time()
                 obs, reward, done, info = self.env_train.step(action)
+                env_step_time = time.time() - env_step_start
+                env_step_times.append(env_step_time)
+                
                 reward_sum += reward
                 done = np.all(done)
+                
+                step_time = time.time() - step_start
+                step_times.append(step_time)
+                
+                # Print every 10 steps
+                if step_id % 10 == 0:
+                    print(f"  Step {step_id}: total={step_time:.3f}s, "
+                          f"prep={prep_time:.3f}s, policy={policy_time:.3f}s, "
+                          f"convert={convert_time:.3f}s, env_step={env_step_time:.3f}s")
                 
                 if done:
                     break
             
+            episode_time = time.time() - episode_start
+            
             all_returns_train.append(reward_sum)
             all_success_rates_train.append(self.env_train.env.is_success())
             
+            print(f"[Episode {episode_id}] Total episode time: {episode_time:.2f}s")
+            print(f"  Avg step time: {np.mean(step_times):.3f}s")
+            print(f"  Avg policy time: {np.mean(policy_times):.3f}s")
+            print(f"  Avg env step time: {np.mean(env_step_times):.3f}s")
+            print(f"  Num steps: {len(step_times)}")
             cprint(f"Train Episode {episode_id}: Reward={reward_sum:.2f}, Success={self.env_train.env.is_success()}", "yellow")
+            print("-"*50)
         
         ##############################
         # Test env loop
