@@ -372,39 +372,39 @@ class DP3(BasePolicy):
         # print(f"t5-t4: {t5-t4:.3f}")
         # print(f"t6-t5: {t6-t5:.3f}")
         # ================= DEBUG: GT vs PRED =================
-        with torch.no_grad():
-            # Unnormalize GT
-            gt_action = self.normalizer['action'].unnormalize(nactions)
+        # with torch.no_grad():
+        #     # Unnormalize GT
+        #     gt_action = self.normalizer['action'].unnormalize(nactions)
 
-            pred_type = self.noise_scheduler.config.prediction_type
+        #     pred_type = self.noise_scheduler.config.prediction_type
 
-            if pred_type == "sample":
-                # pred directly predicts trajectory
-                pred_action = self.normalizer['action'].unnormalize(pred)
+        #     if pred_type == "sample":
+        #         # pred directly predicts trajectory
+        #         pred_action = self.normalizer['action'].unnormalize(pred)
 
-            elif pred_type == "epsilon":
-                # reconstruct x0 from epsilon (approx)
-                alpha_t = self.noise_scheduler.alphas_cumprod[timesteps]
-                alpha_t = alpha_t.view(-1, 1, 1)
-                pred_action = (
-                    noisy_trajectory - torch.sqrt(1 - alpha_t) * pred
-                ) / torch.sqrt(alpha_t)
-                pred_action = self.normalizer['action'].unnormalize(pred_action)
+        #     elif pred_type == "epsilon":
+        #         # reconstruct x0 from epsilon (approx)
+        #         alpha_t = self.noise_scheduler.alphas_cumprod[timesteps]
+        #         alpha_t = alpha_t.view(-1, 1, 1)
+        #         pred_action = (
+        #             noisy_trajectory - torch.sqrt(1 - alpha_t) * pred
+        #         ) / torch.sqrt(alpha_t)
+        #         pred_action = self.normalizer['action'].unnormalize(pred_action)
 
-            else:
-                pred_action = None
+        #     else:
+        #         pred_action = None
 
-            print("\n===== TRAIN ACTION DEBUG =====")
-            print("GT action [0, :3]:")
-            print(gt_action[0, :3])
+        #     print("\n===== TRAIN ACTION DEBUG =====")
+        #     print("GT action [0, :3]:")
+        #     print(gt_action[0, :3])
 
-            if pred_action is not None:
-                print("Pred action [0, :3]:")
-                print(pred_action[0, :3])
-            else:
-                print("Pred action not available for type:", pred_type)
+        #     if pred_action is not None:
+        #         print("Pred action [0, :3]:")
+        #         print(pred_action[0, :3])
+        #     else:
+        #         print("Pred action not available for type:", pred_type)
 
-            print("==============================")
+        #     print("==============================")
     # ====================================================
 
         return loss, loss_dict
