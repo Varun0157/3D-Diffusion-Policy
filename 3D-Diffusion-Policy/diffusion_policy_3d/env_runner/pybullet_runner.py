@@ -250,23 +250,35 @@ class UR5PyBulletRunner(BaseRunner):
         cprint(f"Test  - Mean SR: {SR_mean_test:.3f}, Mean Return: {returns_mean_test:.3f}", "green")
         cprint("="*50, "green")
         
-        # Get videos
-        videos_train = self.env_train.env.get_video()
-        videos_test = self.env_test.env.get_video()
-        
-        if len(videos_train.shape) == 5:
-            videos_train = videos_train[:, 0]
-        if len(videos_test.shape) == 5:
-            videos_test = videos_test[:, 0]
-        
-        sim_video_train = wandb.Video(videos_train, fps=self.fps, format="mp4")
-        sim_video_test = wandb.Video(videos_test, fps=self.fps, format="mp4")
-        
-        log_data['sim_video_train'] = sim_video_train
-        log_data['sim_video_test'] = sim_video_test
+        # Get videos and create WandB Video objects
+        try:
+            videos_train = self.env_train.env.get_video()
+            videos_test = self.env_test.env.get_video()
+            
+            # Handle video shape (remove extra dimension if needed)
+            if len(videos_train.shape) == 5:
+                videos_train = videos_train[:, 0]
+            if len(videos_test.shape) == 5:
+                videos_test = videos_test[:, 0]
+            
+            # Create WandB video objects
+            sim_video_train = wandb.Video(videos_train, fps=self.fps, format="mp4")
+            sim_video_test = wandb.Video(videos_test, fps=self.fps, format="mp4")
+            
+            log_data['sim_video_train'] = sim_video_train
+            log_data['sim_video_test'] = sim_video_test
+            
+            cprint("✓ Videos captured and ready for WandB logging", "cyan")
+            
+        except Exception as e:
+            cprint(f"⚠ Warning: Could not capture videos: {e}", "yellow")
+            # Continue without videos - training metrics are more important
         
         # Clear video buffers
-        _ = self.env_train.reset()
-        _ = self.env_test.reset()
+        try:
+            _ = self.env_train.reset()
+            _ = self.env_test.reset()
+        except:
+            pass
         
         return log_data
