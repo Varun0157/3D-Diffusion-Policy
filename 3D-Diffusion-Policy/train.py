@@ -333,6 +333,15 @@ class TrainDP3Workspace:
                     new_key = key.replace("/", "_")
                     metric_dict[new_key] = value
 
+                # NOTE : Need to change this later 
+                if 'test_mean_score' not in metric_dict:
+                    # Use validation loss as proxy if rollout hasn't run yet
+                    if 'val_loss' in metric_dict:
+                        metric_dict['test_mean_score'] = -metric_dict['val_loss']
+                    else:
+                        # Use negative train loss as last resort
+                        metric_dict['test_mean_score'] = -train_loss
+
                 # We can't copy the last checkpoint here
                 # since save_checkpoint uses threads.
                 if (self.epoch % 50 == 0):
