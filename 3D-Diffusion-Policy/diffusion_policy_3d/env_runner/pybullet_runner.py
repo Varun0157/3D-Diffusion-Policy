@@ -103,104 +103,104 @@ class UR5PyBulletRunner(BaseRunner):
         all_returns_test = []
         all_success_rates_test = []
         
-        ##############################
-        # Train env loop
-        ##############################
-        cprint("="*50, "cyan")
-        cprint("Running on TRAIN environment", "cyan")
-        cprint("="*50, "cyan")
+        # ##############################
+        # # Train env loop
+        # ##############################
+        # cprint("="*50, "cyan")
+        # cprint("Running on TRAIN environment", "cyan")
+        # cprint("="*50, "cyan")
         
-        for episode_id in tqdm.tqdm(
-            range(self.episode_train), 
-            desc=f"UR5 PyBullet Train Env",
-            leave=False, 
-            mininterval=self.tqdm_interval_sec
-        ):
-            episode_start = time.time()
+        # for episode_id in tqdm.tqdm(
+        #     range(self.episode_train), 
+        #     desc=f"UR5 PyBullet Train Env",
+        #     leave=False, 
+        #     mininterval=self.tqdm_interval_sec
+        # ):
+        #     episode_start = time.time()
             
-            # Reset environment
-            reset_start = time.time()
-            obs = self.env_train.reset()
-            reset_time = time.time() - reset_start
-            print(f"[Episode {episode_id}] Reset time: {reset_time:.2f}s")
+        #     # Reset environment
+        #     reset_start = time.time()
+        #     obs = self.env_train.reset()
+        #     reset_time = time.time() - reset_start
+        #     print(f"[Episode {episode_id}] Reset time: {reset_time:.2f}s")
             
-            policy.reset()
+        #     policy.reset()
             
-            done = False
-            reward_sum = 0.
+        #     done = False
+        #     reward_sum = 0.
             
-            step_times = []
-            policy_times = []
-            env_step_times = []
+        #     step_times = []
+        #     policy_times = []
+        #     env_step_times = []
             
-            for step_id in range(self.max_steps):
-                step_start = time.time()
+        #     for step_id in range(self.max_steps):
+        #         step_start = time.time()
                 
-                # Prepare observation
-                prep_start = time.time()
-                np_obs_dict = dict(obs)
+        #         # Prepare observation
+        #         prep_start = time.time()
+        #         np_obs_dict = dict(obs)
                 
-                # Device transfer
-                obs_dict = dict_apply(
-                    np_obs_dict,
-                    lambda x: torch.from_numpy(x).to(device=device)
-                )
-                prep_time = time.time() - prep_start
+        #         # Device transfer
+        #         obs_dict = dict_apply(
+        #             np_obs_dict,
+        #             lambda x: torch.from_numpy(x).to(device=device)
+        #         )
+        #         prep_time = time.time() - prep_start
                 
-                # Run policy
-                policy_start = time.time()
-                with torch.no_grad():
-                    obs_dict_input = {}
-                    obs_dict_input['point_cloud'] = obs_dict['point_cloud'].unsqueeze(0)
-                    obs_dict_input['agent_pos'] = obs_dict['agent_pos'].unsqueeze(0)
+        #         # Run policy
+        #         policy_start = time.time()
+        #         with torch.no_grad():
+        #             obs_dict_input = {}
+        #             obs_dict_input['point_cloud'] = obs_dict['point_cloud'].unsqueeze(0)
+        #             obs_dict_input['agent_pos'] = obs_dict['agent_pos'].unsqueeze(0)
                     
-                    action_dict = policy.predict_action(obs_dict_input)
-                policy_time = time.time() - policy_start
-                policy_times.append(policy_time)
+        #             action_dict = policy.predict_action(obs_dict_input)
+        #         policy_time = time.time() - policy_start
+        #         policy_times.append(policy_time)
                 
-                # Convert action to numpy
-                convert_start = time.time()
-                np_action_dict = dict_apply(
-                    action_dict,
-                    lambda x: x.detach().to('cpu').numpy()
-                )
+        #         # Convert action to numpy
+        #         convert_start = time.time()
+        #         np_action_dict = dict_apply(
+        #             action_dict,
+        #             lambda x: x.detach().to('cpu').numpy()
+        #         )
                 
-                action = np_action_dict['action'].squeeze(0)
-                convert_time = time.time() - convert_start
-                # Step 0: total=17.187s, prep=0.000s, policy=0.089s, convert=0.000s, env_step=17.097s
-                # Step environment
-                env_step_start = time.time()
-                obs, reward, done, info = self.env_train.step(action)
-                env_step_time = time.time() - env_step_start
-                env_step_times.append(env_step_time)
+        #         action = np_action_dict['action'].squeeze(0)
+        #         convert_time = time.time() - convert_start
+        #         # Step 0: total=17.187s, prep=0.000s, policy=0.089s, convert=0.000s, env_step=17.097s
+        #         # Step environment
+        #         env_step_start = time.time()
+        #         obs, reward, done, info = self.env_train.step(action)
+        #         env_step_time = time.time() - env_step_start
+        #         env_step_times.append(env_step_time)
                 
-                reward_sum += reward
-                done = np.all(done)
+        #         reward_sum += reward
+        #         done = np.all(done)
                 
-                step_time = time.time() - step_start
-                step_times.append(step_time)
+        #         step_time = time.time() - step_start
+        #         step_times.append(step_time)
                 
-                # Print every 10 steps
-                if step_id % 10 == 0:
-                    print(f"  Step {step_id}: total={step_time:.3f}s, "
-                          f"prep={prep_time:.3f}s, policy={policy_time:.3f}s, "
-                          f"convert={convert_time:.3f}s, env_step={env_step_time:.3f}s")
+        #         # Print every 10 steps
+        #         if step_id % 10 == 0:
+        #             print(f"  Step {step_id}: total={step_time:.3f}s, "
+        #                   f"prep={prep_time:.3f}s, policy={policy_time:.3f}s, "
+        #                   f"convert={convert_time:.3f}s, env_step={env_step_time:.3f}s")
                 
-                if done:
-                    break
+        #         if done:
+        #             break
             
-            episode_time = time.time() - episode_start
+        #     episode_time = time.time() - episode_start
             
-            all_returns_train.append(reward_sum)
-            all_success_rates_train.append(self.env_train.env.is_success())
+        #     all_returns_train.append(reward_sum)
+        #     all_success_rates_train.append(self.env_train.env.is_success())
             
-            print(f"[Episode {episode_id}] Total episode time: {episode_time:.2f}s")
-            print(f"  Avg step time: {np.mean(step_times):.3f}s")
-            print(f"  Avg policy time: {np.mean(policy_times):.3f}s")
-            print(f"  Avg env step time: {np.mean(env_step_times):.3f}s")
-            print(f"  Num steps: {len(step_times)}")
-            cprint(f"Train Episode {episode_id}: Reward={reward_sum:.2f}, Success={self.env_train.env.is_success()}", "yellow")
-            print("-"*50)
+        #     print(f"[Episode {episode_id}] Total episode time: {episode_time:.2f}s")
+        #     print(f"  Avg step time: {np.mean(step_times):.3f}s")
+        #     print(f"  Avg policy time: {np.mean(policy_times):.3f}s")
+        #     print(f"  Avg env step time: {np.mean(env_step_times):.3f}s")
+        #     print(f"  Num steps: {len(step_times)}")
+        #     cprint(f"Train Episode {episode_id}: Reward={reward_sum:.2f}, Success={self.env_train.env.is_success()}", "yellow")
+        #     print("-"*50)
         
         ##############################
         # Test env loop
