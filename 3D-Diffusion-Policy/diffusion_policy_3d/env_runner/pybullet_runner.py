@@ -115,12 +115,17 @@ class UR5PyBulletRunner(BaseRunner):
             if self.visualize_gt and dataset is not None:
                 try:
                     # Get a sample from the validation dataset
-                    sample_idx = episode_id % len(dataset.get_validation_dataset())
-                    sample = dataset.get_validation_dataset()[sample_idx]
+                    val_dataset = dataset.get_validation_dataset()
+                    sample_idx = episode_id % len(val_dataset)
+                    sample = val_dataset[sample_idx]
                     
                     # Extract GT actions (shape: T, action_dim)
                     # Assuming actions contain [eef_pos(3), eef_orn(3), joint_angles(7)]
                     gt_actions = sample['action']  # Shape: (T, 13)
+                    
+                    # Convert to numpy if it's a tensor
+                    if isinstance(gt_actions, torch.Tensor):
+                        gt_actions = gt_actions.cpu().numpy()
                     
                     # Set GT trajectory in the base environment
                     # We need to access the base env through the wrappers
@@ -131,6 +136,8 @@ class UR5PyBulletRunner(BaseRunner):
                     cprint(f"[Episode {episode_id}] Set GT trajectory with {len(gt_actions)} waypoints", "cyan")
                 except Exception as e:
                     cprint(f"[Warning] Could not load GT trajectory: {e}", "yellow")
+                    import traceback
+                    traceback.print_exc()
 
             obs = self.env_test.reset()
             policy.reset()

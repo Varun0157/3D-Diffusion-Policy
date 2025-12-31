@@ -130,8 +130,6 @@ class UR5Robotiq85:
         self.max_velocity = 3
 
     def load(self):
-        # self.id = p.loadURDF("/home/aniruth/Desktop/RRC/3D-Diffusion-Policy/3D-Diffusion-Policy/diffusion_policy_3d/env/pybullet/urdf/ur5_robotiq_85.urdf", self.base_pos, self.base_ori, useFixedBase=True)
-
         self.id = p.loadURDF('/home/cross-emb/3D-Diffusion-Policy/3D-Diffusion-Policy/diffusion_policy_3d/env/pybullet/urdf/ur5_robotiq_85.urdf', self.base_pos, self.base_ori, useFixedBase=True)
         self.__parse_joint_info__()
         self.__setup_mimic_joints__()
@@ -341,9 +339,13 @@ class UR5PickPlaceEnv(gym.Env):
         Set ground truth trajectory for visualization
         
         Args:
-            gt_trajectory: numpy array of shape (T, 13) where first 3 dims are EEF positions
+            gt_trajectory: numpy array or torch tensor of shape (T, 13) where first 3 dims are EEF positions
                           or (T, 7) where first 3 dims are EEF positions
         """
+        # Handle both numpy arrays and torch tensors
+        if hasattr(gt_trajectory, 'cpu'):  # It's a torch tensor
+            gt_trajectory = gt_trajectory.cpu().numpy()
+        
         self.gt_eef_positions = gt_trajectory[:, :3].copy()  # Extract x, y, z positions
         cprint(f"[GT Traj] Set {len(self.gt_eef_positions)} waypoints", "cyan")
 
