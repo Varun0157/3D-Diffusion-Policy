@@ -261,8 +261,8 @@ class TrainDP3Workspace:
                 and env_runner is not None
             ):
                 t3 = time.time()
-                # runner_log = env_runner.run(policy, dataset=dataset)
-                runner_log = env_runner.run(policy)
+                runner_log = env_runner.run(policy, dataset=dataset)
+                # runner_log = env_runner.run(policy)
                 t4 = time.time()
                 # print(f"rollout time: {t4-t3:.3f}")
                 # log all
@@ -306,6 +306,7 @@ class TrainDP3Workspace:
                     result = policy.predict_action(obs_dict)
                     pred_action = result["action_pred"]
                     mse = torch.nn.functional.mse_loss(pred_action, gt_action)
+                    print(f"Train action MSE error: {mse.item():.6f}")
                     step_log["train_action_mse_error"] = mse.item()
                     del batch
                     del obs_dict
@@ -373,6 +374,7 @@ class TrainDP3Workspace:
             cprint(f"Resuming from checkpoint {lastest_ckpt_path}", "magenta")
             self.load_checkpoint(path=lastest_ckpt_path)
 
+        dataset: BaseDataset = hydra.utils.instantiate(cfg.task.dataset)
         # configure env
         env_runner: BaseRunner
         env_runner = hydra.utils.instantiate(
@@ -385,7 +387,8 @@ class TrainDP3Workspace:
         policy.eval()
         policy.cuda()
 
-        runner_log = env_runner.run(policy)
+        # Run evaluation with dataset for GT visualization
+        runner_log = env_runner.run(policy, dataset=dataset)
 
         cprint(f"---------------- Eval Results --------------", "magenta")
         for key, value in runner_log.items():

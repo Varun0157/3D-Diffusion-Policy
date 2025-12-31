@@ -72,7 +72,6 @@ def downsample_with_fps(points: np.ndarray, num_points: int = 2500):
     points = points[sampled_indices.squeeze(0).cpu().numpy()]
     return points
 
-import numpy as np
 
 def depth_to_point_cloud(depth_buffer, view_matrix, proj_matrix, width=224, height=224,
                          fov=60, near=0.01, far=3.0, max_depth=2.5):
@@ -119,7 +118,6 @@ def depth_to_point_cloud(depth_buffer, view_matrix, proj_matrix, width=224, heig
     return points_world
 
 
-
 class UR5Robotiq85:
     """UR5 Robot with Robotiq 85 Gripper"""
     def __init__(self, pos, ori):
@@ -132,7 +130,8 @@ class UR5Robotiq85:
         self.max_velocity = 3
 
     def load(self):
-        # self.id = p.loadURDF('/home/aniruth/Desktop/RRC/3D-Diffusion-Policy/3D-Diffusion-Policy/diffusion_policy_3d/env/pybullet/urdf/ur5_robotiq_85.urdf', self.base_pos, self.base_ori, useFixedBase=True)
+        # self.id = p.loadURDF("/home/aniruth/Desktop/RRC/3D-Diffusion-Policy/3D-Diffusion-Policy/diffusion_policy_3d/env/pybullet/urdf/ur5_robotiq_85.urdf", self.base_pos, self.base_ori, useFixedBase=True)
+
         self.id = p.loadURDF('/home/cross-emb/3D-Diffusion-Policy/3D-Diffusion-Policy/diffusion_policy_3d/env/pybullet/urdf/ur5_robotiq_85.urdf', self.base_pos, self.base_ori, useFixedBase=True)
         self.__parse_joint_info__()
         self.__setup_mimic_joints__()
@@ -201,7 +200,6 @@ class UR5Robotiq85:
             eef_orn_euler,
             joint_states,
             [gripper_angle]
-
         ])
 
         return state
@@ -233,8 +231,8 @@ class UR5Robotiq85:
                 self.id, joint_id, 
                 p.POSITION_CONTROL,
                 targetPosition=joint_positions[i],
-                force=500,  # High force
-                maxVelocity=10  # High velocity
+                force=500,
+                maxVelocity=10
             )
 
         if len(joint_positions) > self.arm_num_dofs:
@@ -245,24 +243,16 @@ class UR5Robotiq85:
                 targetPosition=gripper_angle,
                 force=100
             )
-        # Ignoring physics and directly setting it !!
-    # # Set arm joints DIRECTLY (no physics, instant teleport)
-    #     for i, joint_id in enumerate(self.arm_controllable_joints):
-    #         p.resetJointState(self.id, joint_id, joint_positions[i])
 
-    #     # Set gripper
-    #     if len(joint_positions) > self.arm_num_dofs:
-    #         gripper_angle = joint_positions[self.arm_num_dofs]
-    #         p.resetJointState(self.id, self.mimic_parent_id, gripper_angle)
-            
-    #         # Also set mimic joints
-    #         for joint_id, multiplier in self.mimic_child_multiplier.items():
-    #             p.resetJointState(self.id, joint_id, gripper_angle * multiplier)
+    def get_eef_position(self):
+        """Get end-effector 3D position"""
+        eef_state = p.getLinkState(self.id, self.eef_id)
+        return np.array(eef_state[0])
 
-    
+
 class UR5PickPlaceEnv(gym.Env):
     """
-    PyBullet UR5 Pick and Place Environment
+    PyBullet UR5 Pick and Place Environment with GT Trajectory Visualization
 
     This environment follows the Gym interface and is compatible with
     MultiStepWrapper for multi-step action execution.
@@ -271,7 +261,8 @@ class UR5PickPlaceEnv(gym.Env):
     """
     metadata = {"render.modes": ["rgb_array"], "video.frames_per_second": 10}
 
-    def __init__(self, use_gui=False, num_points=2500, image_size=224, use_workspace_crop=True, workspace_std=2.0):
+    def __init__(self, use_gui=False, num_points=2500, image_size=224, 
+                 use_workspace_crop=True, workspace_std=2.0, visualize_gt=False):
         self.use_gui = use_gui
         self.num_points = num_points
         self.image_size = image_size
@@ -279,7 +270,12 @@ class UR5PickPlaceEnv(gym.Env):
         self.current_step = 0
         self.use_workspace_crop = use_workspace_crop
         self.workspace_std = workspace_std
-        self.workspace_bounds = None  # Will be computed from first observation
+        self.workspace_bounds = None
+        self.visualize_gt = visualize_gt  # NEW: Flag for GT visualization
+
+        # NEW: Storage for GT trajectory
+        self.gt_eef_positions = []
+        self.gt_sphere_ids = []
 
         # Connect to PyBullet
         if self.use_gui:
@@ -310,19 +306,13 @@ class UR5PickPlaceEnv(gym.Env):
         self.cube_start_pos = None
 
         # Define action and observation spaces
-        # Action: 13D vector where:
-        #   - First 6D (eef_pos(3) + eef_orn(3)): Not used in this version
-        #   - Last 7D (arm_joints(6) + gripper(1)): DELTA joint angles
-        # Note: MultiStepWrapper will repeat this to create multi-step actions
         self.action_space = spaces.Box(
-            low=-0.1,  # Maximum delta per step
+            low=-0.1,
             high=0.1,
             shape=(13,),
             dtype=np.float32
         )
 
-        # Observation space: Single timestep observations
-        # Note: MultiStepWrapper will stack these to create multi-step observations
         self.observation_space = spaces.Dict({
             'point_cloud': spaces.Box(
                 low=-np.inf,
@@ -346,17 +336,74 @@ class UR5PickPlaceEnv(gym.Env):
 
         self.is_success_flag = False
 
+    def set_gt_trajectory(self, gt_trajectory):
+        """
+        Set ground truth trajectory for visualization
+        
+        Args:
+            gt_trajectory: numpy array of shape (T, 13) where first 3 dims are EEF positions
+                          or (T, 7) where first 3 dims are EEF positions
+        """
+        self.gt_eef_positions = gt_trajectory[:, :3].copy()  # Extract x, y, z positions
+        cprint(f"[GT Traj] Set {len(self.gt_eef_positions)} waypoints", "cyan")
+
+    def enable_gt_visualization(self, enable=True):
+        """Enable or disable GT trajectory visualization"""
+        self.visualize_gt = enable
+
+    def _clear_gt_spheres(self):
+        """Remove all GT trajectory spheres"""
+        for sphere_id in self.gt_sphere_ids:
+            try:
+                p.removeBody(sphere_id)
+            except:
+                pass
+        self.gt_sphere_ids = []
+
+    def _visualize_gt_trajectory(self):
+        """Visualize ground truth trajectory as blue spheres"""
+        if not self.visualize_gt or len(self.gt_eef_positions) == 0:
+            return
+
+        # Clear old spheres
+        self._clear_gt_spheres()
+
+        # Create blue spheres at GT positions
+        for pos in self.gt_eef_positions:
+            # Create small blue sphere
+            sphere_visual = p.createVisualShape(
+                shapeType=p.GEOM_SPHERE,
+                radius=0.015,  # 1.5cm radius
+                rgbaColor=[0.0, 0.0, 1.0, 0.6]  # Blue with transparency
+            )
+            
+            sphere_collision = p.createCollisionShape(
+                shapeType=p.GEOM_SPHERE,
+                radius=0.001  # Tiny collision to avoid interference
+            )
+            
+            sphere_id = p.createMultiBody(
+                baseMass=0,  # Static object
+                baseCollisionShapeIndex=sphere_collision,
+                baseVisualShapeIndex=sphere_visual,
+                basePosition=pos
+            )
+            
+            self.gt_sphere_ids.append(sphere_id)
+
     def reset(self):
         """Reset the environment"""
         self.current_step = 0
         self.is_success_flag = False
-
-        # Reset workspace bounds (will be recomputed)
         self.workspace_bounds = None
 
         # Remove old cube if exists
         if self.cube_id is not None:
             p.removeBody(self.cube_id)
+
+        # Clear GT trajectory spheres
+        self._clear_gt_spheres()
+        self.gt_eef_positions = []
 
         # Reset robot to rest pose
         target_joint_positions = [0, -1.57, 1.57, -1.5, -1.57, 0.0]
@@ -385,6 +432,9 @@ class UR5PickPlaceEnv(gym.Env):
         for _ in range(50):
             p.stepSimulation()
 
+        # Visualize GT trajectory if available
+        self._visualize_gt_trajectory()
+
         obs = self._get_obs()
         return obs
 
@@ -395,56 +445,24 @@ class UR5PickPlaceEnv(gym.Env):
         Action is 13D: [eef_pos(3), eef_orn(3), joint_deltas(6), gripper_delta(1)]
         - First 6D (eef_pos + eef_orn): Not used
         - Last 7D: DELTA joint angles applied to current joint positions
-
-        Note: MultiStepWrapper will call this multiple times per step,
-        so each call should execute a single atomic action.
-
-        Args:
-            action: 13D action vector (only last 7D are used as deltas)
         """
         self.current_step += 1
 
-        joint_deltas = action[6:13]  # Last 7D: delta for 6 arm joints + 1 gripper
+        joint_deltas = action[6:13]
 
         # Get current joint positions
         current_joint_positions = self.robot.get_joint_positions()
-        # print("Current joint positions:", current_joint_positions)
 
         # Apply delta to get target positions
         target_joint_positions = current_joint_positions + joint_deltas
-        print("Target joint positions:", target_joint_positions)
+
         # Get joint limits
         joint_limits_lower, joint_limits_upper = self.robot.get_joint_limits()
 
-        # # Clip to joint limits
-        # target_joint_positions = np.clip(
-        #     target_joint_positions,
-        #     joint_limits_lower,
-        #     joint_limits_upper
-        # )
-
-        
         self.robot.set_joint_positions(target_joint_positions)
-
-        """
-        We have 2 options here:
-        1. Keep the sim time high and use physics (setJointMotorControl2)
-        2. Lower the sim time step and directly set joint states (resetJointState)
-        """
 
         for _ in range(50):
             p.stepSimulation()
-
-        reached_pos = self.robot.get_joint_positions()
-        # Compute difference
-        joint_error = reached_pos - target_joint_positions
-        joint_error_norm = np.linalg.norm(joint_error)
-
-        # ---- Debug prints ----
-        # this is working - checked 
-    
-        # print("‖Joint error‖ (L2 norm)  :", joint_error_norm)
-        # print("-" * 50)
 
         obs = self._get_obs()
 
@@ -454,7 +472,6 @@ class UR5PickPlaceEnv(gym.Env):
 
         if self.cube_id is not None:
             cube_pos, _ = p.getBasePositionAndOrientation(self.cube_id)
-            # Check if cube is in tray region
             if (abs(cube_pos[0] - self.tray_pos[0]) < 0.2 and
                 abs(cube_pos[1] - self.tray_pos[1]) < 0.2 and
                 abs(cube_pos[2] - self.tray_pos[2]) < 0.1):
@@ -472,10 +489,8 @@ class UR5PickPlaceEnv(gym.Env):
 
     def _get_obs(self):
         """Get current observation"""
-        # Get robot state
         agent_pos = self.robot.get_robot_state()
 
-        # Capture camera image and point cloud
         view_matrix = p.computeViewMatrix(
             cameraEyePosition=self.tp_cam_eye,
             cameraTargetPosition=self.tp_cam_target,
@@ -491,16 +506,13 @@ class UR5PickPlaceEnv(gym.Env):
             projectionMatrix=proj_matrix
         )
 
-        rgb_img = np.array(rgb_img)[:, :, :3]  # (H, W, 3)
+        rgb_img = np.array(rgb_img)[:, :, :3]
         depth_buffer = np.array(depth_img)
 
-        # Convert to point cloud
         point_cloud = depth_to_point_cloud(depth_buffer, view_matrix, proj_matrix,
                                           self.image_size, self.image_size)
 
-        # Apply workspace cropping if enabled
         if self.use_workspace_crop:
-            # Compute workspace bounds on first observation
             if self.workspace_bounds is None:
                 self.workspace_bounds = compute_workspace_bounds(point_cloud, n_std=self.workspace_std)
                 if self.workspace_bounds is not None:
@@ -509,27 +521,21 @@ class UR5PickPlaceEnv(gym.Env):
                     print(f"  Y: [{self.workspace_bounds[1][0]:.3f}, {self.workspace_bounds[1][1]:.3f}]")
                     print(f"  Z: [{self.workspace_bounds[2][0]:.3f}, {self.workspace_bounds[2][1]:.3f}]")
 
-            # Crop point cloud to workspace
             if self.workspace_bounds is not None:
                 mask = crop_workspace(point_cloud, self.workspace_bounds)
                 point_cloud = point_cloud[mask]
 
-                # Debug: print how many points remain
                 if self.current_step == 0:
                     print(f"  After workspace crop: {point_cloud.shape[0]} points")
 
-        # Handle empty point cloud
         if point_cloud.shape[0] == 0:
             point_cloud = np.zeros((self.num_points, 3), dtype=np.float32)
-        # Downsample point cloud
         elif point_cloud.shape[0] > self.num_points:
             point_cloud = downsample_with_fps(point_cloud, self.num_points)
         elif point_cloud.shape[0] < self.num_points:
-            # Pad if fewer points
             padding = np.zeros((self.num_points - point_cloud.shape[0], 3))
             point_cloud = np.vstack([point_cloud, padding])
 
-        # Transpose image to channel-first (3, H, W)
         rgb_img = rgb_img.transpose(2, 0, 1)
 
         obs_dict = {
@@ -562,6 +568,7 @@ class UR5PickPlaceEnv(gym.Env):
 
     def close(self):
         """Close the environment"""
+        self._clear_gt_spheres()
         p.disconnect(self.physics_client)
 
     def is_success(self):

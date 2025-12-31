@@ -16,7 +16,7 @@ import diffusion_policy_3d.common.logger_util as logger_util
 
 class UR5PyBulletRunner(BaseRunner):
     """
-    Runner for UR5 Pick-and-Place task in PyBullet
+    Runner for UR5 Pick-and-Place task in PyBullet with GT Trajectory Visualization
     
     This runner wraps the base UR5PickPlaceEnv with MultiStepWrapper, which:
     1. Stacks multiple observations together (n_obs_steps)
@@ -41,6 +41,7 @@ class UR5PyBulletRunner(BaseRunner):
                  image_size=224,
                  use_workspace_crop=True,
                  workspace_std=2.0,
+                 visualize_gt=True,  # NEW: Enable GT visualization by default
                  ):
         super().__init__(output_dir)
         
@@ -50,6 +51,7 @@ class UR5PyBulletRunner(BaseRunner):
         self.fps = fps
         self.crf = crf
         self.tqdm_interval_sec = tqdm_interval_sec
+        self.visualize_gt = visualize_gt  # NEW
         
         # Environment factory function
         def env_fn():
@@ -70,6 +72,7 @@ class UR5PyBulletRunner(BaseRunner):
                         image_size=image_size,
                         use_workspace_crop=use_workspace_crop,
                         workspace_std=workspace_std,
+                        visualize_gt=self.visualize_gt,  # NEW: Pass visualization flag
                     )
                 ),
                 n_obs_steps=n_obs_steps,
@@ -78,13 +81,19 @@ class UR5PyBulletRunner(BaseRunner):
                 reward_agg_method='sum',
             )
         
-
         self.env_test = env_fn()
         
         self.episode_test = n_test
         self.logger_util_test = logger_util.LargestKRecorder(K=3)
         
-    def run(self, policy: BasePolicy):
+    def run(self, policy: BasePolicy, dataset=None):
+        """
+        Run evaluation with optional GT trajectory visualization
+        
+        Args:
+            policy: Policy to evaluate
+            dataset: Optional dataset to extract GT trajectories from
+        """
         device = policy.device
 
         all_returns_test = []
@@ -92,6 +101,8 @@ class UR5PyBulletRunner(BaseRunner):
 
         cprint("=" * 50, "cyan")
         cprint("Running on TEST environment", "cyan")
+        if self.visualize_gt and dataset is not None:
+            cprint("GT trajectory visualization: ENABLED", "green")
         cprint("=" * 50, "cyan")
 
         for episode_id in tqdm.tqdm(
@@ -100,6 +111,27 @@ class UR5PyBulletRunner(BaseRunner):
             leave=False,
             mininterval=self.tqdm_interval_sec
         ):
+            # NEW: Extract GT trajectory from dataset if available
+            if self.visualize_gt and dataset is not None:
+                try:
+                    # Get a sample from the validation dataset
+                    sample_idx = episode_id % len(dataset.get_validation_dataset())
+                    sample = dataset.get_validation_dataset()[sample_idx]
+                    
+                    # Extract GT actions (shape: T, action_dim)
+                    # Assuming actions contain [eef_pos(3), eef_orn(3), joint_angles(7)]
+                    gt_actions = sample['action']  # Shape: (T, 13)
+                    
+                    # Set GT trajectory in the base environment
+                    # We need to access the base env through the wrappers
+                    base_env = self.env_test.env.env  # MultiStepWrapper -> VideoWrapper -> BaseEnv
+                    base_env.set_gt_trajectory(gt_actions)
+                    base_env.enable_gt_visualization(True)
+                    
+                    cprint(f"[Episode {episode_id}] Set GT trajectory with {len(gt_actions)} waypoints", "cyan")
+                except Exception as e:
+                    cprint(f"[Warning] Could not load GT trajectory: {e}", "yellow")
+
             obs = self.env_test.reset()
             policy.reset()
 
@@ -124,8 +156,6 @@ class UR5PyBulletRunner(BaseRunner):
                     action_dict,
                     lambda x: x.detach().cpu().numpy()
                 )['action'].squeeze(0)
-            
-                print(f"Episode {episode_id}, Step {step_id}, Action: {action}")
 
                 obs, reward, done, info = self.env_test.step(action)
                 reward_sum += reward
@@ -174,7 +204,7 @@ class UR5PyBulletRunner(BaseRunner):
             log_data['sim_video_test'] = wandb.Video(
                 videos_test, fps=self.fps, format="mp4"
             )
-            cprint("✓ Test video captured", "cyan")
+            cprint("✓ Test video captured (with GT trajectory visualization)", "cyan")
 
         except Exception as e:
             cprint(f"⚠ Video capture failed: {e}", "yellow")
