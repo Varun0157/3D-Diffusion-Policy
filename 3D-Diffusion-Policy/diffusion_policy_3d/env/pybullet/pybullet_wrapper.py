@@ -412,7 +412,7 @@ class UR5PickPlaceEnv(gym.Env):
 
         # Apply delta to get target positions
         target_joint_positions = current_joint_positions + joint_deltas
-        print("Target joint positions:", target_joint_positions)
+        # print("Target joint positions:", target_joint_positions)
         # Get joint limits
         joint_limits_lower, joint_limits_upper = self.robot.get_joint_limits()
 
