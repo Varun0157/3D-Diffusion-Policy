@@ -124,6 +124,8 @@ class UR5PyBulletRunner(BaseRunner):
                     action_dict,
                     lambda x: x.detach().cpu().numpy()
                 )['action'].squeeze(0)
+            
+                print(f"Episode {episode_id}, Step {step_id}, Action: {action}")
 
                 obs, reward, done, info = self.env_test.step(action)
                 reward_sum += reward
