@@ -339,16 +339,21 @@ class UR5PickPlaceEnv(gym.Env):
         Set ground truth trajectory for visualization
         
         Args:
-            gt_trajectory: numpy array or torch tensor of shape (T, 13) where first 3 dims are EEF positions
+            gt_trajectory: numpy array or torch tensor of shape (T, 13) 
                           or (T, 7) where first 3 dims are EEF positions
         """
-        # Handle both numpy arrays and torch tensors
-        if hasattr(gt_trajectory, 'cpu'):  # It's a torch tensor
-            gt_trajectory = gt_trajectory.cpu().numpy()
+        # Robust conversion from Tensor to Numpy
+        if isinstance(gt_trajectory, torch.Tensor):
+            # detach() is required if the tensor tracks gradients
+            gt_trajectory = gt_trajectory.detach().cpu().numpy()
+        elif not isinstance(gt_trajectory, np.ndarray):
+            # Fallback for lists or other iterables
+            gt_trajectory = np.array(gt_trajectory)
         
+        # Now we are guaranteed to have a numpy array
         self.gt_eef_positions = gt_trajectory[:, :3].copy()  # Extract x, y, z positions
         cprint(f"[GT Traj] Set {len(self.gt_eef_positions)} waypoints", "cyan")
-
+        
     def enable_gt_visualization(self, enable=True):
         """Enable or disable GT trajectory visualization"""
         self.visualize_gt = enable
