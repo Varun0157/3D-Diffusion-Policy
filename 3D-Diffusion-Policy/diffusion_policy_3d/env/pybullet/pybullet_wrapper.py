@@ -441,8 +441,10 @@ class UR5PickPlaceEnv(gym.Env):
         joint_error_norm = np.linalg.norm(joint_error)
 
         # ---- Debug prints ----
-        print("‖Joint error‖ (L2 norm)  :", joint_error_norm)
-        print("-" * 50)
+        # this is working - checked 
+    
+        # print("‖Joint error‖ (L2 norm)  :", joint_error_norm)
+        # print("-" * 50)
 
         obs = self._get_obs()
 
