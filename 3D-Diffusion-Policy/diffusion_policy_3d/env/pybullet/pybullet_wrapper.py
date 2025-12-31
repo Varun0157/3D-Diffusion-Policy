@@ -412,7 +412,7 @@ class UR5PickPlaceEnv(gym.Env):
 
         # Apply delta to get target positions
         target_joint_positions = current_joint_positions + joint_deltas
-        # print("Target joint positions:", target_joint_positions)
+        print("Target joint positions:", target_joint_positions)
         # Get joint limits
         joint_limits_lower, joint_limits_upper = self.robot.get_joint_limits()
 
@@ -423,6 +423,7 @@ class UR5PickPlaceEnv(gym.Env):
         #     joint_limits_upper
         # )
 
+        
         self.robot.set_joint_positions(target_joint_positions)
 
         """
@@ -435,7 +436,13 @@ class UR5PickPlaceEnv(gym.Env):
             p.stepSimulation()
 
         reached_pos = self.robot.get_joint_positions()
-        # print("Reached joint positions after action:", reached_pos)
+        # Compute difference
+        joint_error = reached_pos - target_joint_positions
+        joint_error_norm = np.linalg.norm(joint_error)
+
+        # ---- Debug prints ----
+        print("‖Joint error‖ (L2 norm)  :", joint_error_norm)
+        print("-" * 50)
 
         obs = self._get_obs()
 
