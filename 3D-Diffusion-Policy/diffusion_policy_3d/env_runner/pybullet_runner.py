@@ -76,16 +76,29 @@ class UR5PyBulletRunner(BaseRunner):
         Plot predicted vs ground truth joint angle deltas
         
         Args:
-            pred_actions: (T, 13) numpy array of predicted actions
-            gt_actions: (T, 13) numpy array of ground truth actions
+            pred_actions: (T, action_dim) numpy array of predicted actions
+            gt_actions: (T, action_dim) numpy array of ground truth actions
             episode_id: Episode identifier for the plot title
         
         Returns:
             matplotlib figure object
         """
-        # Extract joint deltas (last 7 dimensions: 6 arm joints + 1 gripper)
-        pred_joint_deltas = pred_actions[:, 6:13]  # Shape: (T, 7)
-        gt_joint_deltas = gt_actions[:, 6:13]      # Shape: (T, 7)
+        # Debug: print shapes
+        print(f"pred_actions shape: {pred_actions.shape}")
+        print(f"gt_actions shape: {gt_actions.shape}")
+        
+        # Handle different action dimensions
+        # If actions are already just joint deltas (7D), use them directly
+        # If actions are full state (13D), extract last 7 dimensions
+        if pred_actions.shape[1] == 7:
+            pred_joint_deltas = pred_actions
+            gt_joint_deltas = gt_actions
+        elif pred_actions.shape[1] == 13:
+            # Extract joint deltas (last 7 dimensions: 6 arm joints + 1 gripper)
+            pred_joint_deltas = pred_actions[:, 6:13]  # Shape: (T, 7)
+            gt_joint_deltas = gt_actions[:, 6:13]      # Shape: (T, 7)
+        else:
+            raise ValueError(f"Unexpected action dimension: {pred_actions.shape[1]}")
         
         T = pred_joint_deltas.shape[0]
         timesteps = np.arange(T)
@@ -198,17 +211,53 @@ class UR5PyBulletRunner(BaseRunner):
                         'agent_pos': obs_dict['agent_pos'].unsqueeze(0)
                     })
 
+                # Extract action - handle both single and multi-step actions
                 action = dict_apply(
                     action_dict,
                     lambda x: x.detach().cpu().numpy()
-                )['action'].squeeze(0)
+                )['action']
                 
-                # Store predicted action
-                episode_pred_actions.append(action)
+                # MultiStepWrapper may return (1, n_action_steps, action_dim)
+                # or (n_action_steps, action_dim), we need to flatten properly
+                if action.ndim == 3:
+                    action = action.squeeze(0)  # Remove batch dim: (n_action_steps, action_dim)
+                elif action.ndim == 2 and action.shape[0] == 1:
+                    action = action.squeeze(0)  # Remove batch dim if present
                 
-                # Store corresponding GT action if available
-                if gt_actions_full is not None and step_id < len(gt_actions_full):
-                    episode_gt_actions.append(gt_actions_full[step_id])
+                # Debug: print action shape on first step
+                if step_id == 0 and episode_id == 0:
+                    print(f"Action shape from policy: {action.shape}")
+                    print(f"Action sample (first action): {action[0] if action.ndim == 2 else action}")
+                
+                # Store predicted action(s)
+                # If multi-step (n_action_steps, action_dim), store each action
+                if action.ndim == 2:
+                    for single_action in action:
+                        episode_pred_actions.append(single_action)
+                else:
+                    episode_pred_actions.append(action)
+                
+                # Store corresponding GT action(s) if available
+                # Need to account for n_action_steps
+                if gt_actions_full is not None:
+                    if action.ndim == 2:
+                        # Multi-step action, collect corresponding GT actions
+                        for i in range(action.shape[0]):
+                            gt_idx = step_id * action.shape[0] + i
+                            if gt_idx < len(gt_actions_full):
+                                gt_action = gt_actions_full[gt_idx]
+                                if step_id == 0 and i == 0 and episode_id == 0:
+                                    print(f"GT action shape: {gt_action.shape}")
+                                    print(f"GT action sample: {gt_action}")
+                                episode_gt_actions.append(gt_action)
+                    else:
+                        # Single-step action
+                        if step_id < len(gt_actions_full):
+                            gt_action = gt_actions_full[step_id]
+                            if step_id == 0 and episode_id == 0:
+                                print(f"GT action shape: {gt_action.shape}")
+                                print(f"GT action sample: {gt_action}")
+                            episode_gt_actions.append(gt_action)
 
                 obs, reward, done, info = self.env_test.step(action)
                 reward_sum += reward
@@ -222,9 +271,15 @@ class UR5PyBulletRunner(BaseRunner):
             
             # Store actions for this episode
             if len(episode_pred_actions) > 0:
-                all_pred_actions.append(np.array(episode_pred_actions))
+                episode_pred_array = np.array(episode_pred_actions)
+                all_pred_actions.append(episode_pred_array)
+                if episode_id == 0:
+                    print(f"Episode 0 pred actions stored shape: {episode_pred_array.shape}")
             if len(episode_gt_actions) > 0:
-                all_gt_actions.append(np.array(episode_gt_actions))
+                episode_gt_array = np.array(episode_gt_actions)
+                all_gt_actions.append(episode_gt_array)
+                if episode_id == 0:
+                    print(f"Episode 0 GT actions stored shape: {episode_gt_array.shape}")
 
             cprint(
                 f"Test Episode {episode_id}: "
