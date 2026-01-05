@@ -14,15 +14,7 @@ print("\n" + "=" * 80)
 cprint("  Point Cloud Visualization", "cyan", attrs=["bold"])
 print("=" * 80 + "\n")
 
-try:
-    from diffusion_policy_3d.env.pybullet.pybullet_wrapper import UR5PickPlaceEnv
-    cprint("✓ Environment imported", "green")
-except Exception as e:
-    cprint(f"✗ Import failed: {e}", "red")
-    raise
-
-cprint("\nCreating environment with GUI...", "yellow")
-cprint("(Close the PyBullet window when you're done)", "yellow")
+from diffusion_policy_3d.env.pybullet.pybullet_wrapper import UR5PickPlaceEnv
 
 env = UR5PickPlaceEnv(use_gui=True, num_points=2500, image_size=224)
 cprint("✓ Environment created", "green")
