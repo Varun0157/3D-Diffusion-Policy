@@ -9,10 +9,10 @@ shape_meta: &shape_meta
       shape: [2500, 3]
       type: point_cloud
     agent_pos:
-      shape: [13]
+      shape: [7]
       type: low_dimx
   action:
-    shape: [13]
+    shape: [7]
 
 env_runner:
   _target_: diffusion_policy_3d.env_runner.pybullet_runner.UR5PyBulletRunner
@@ -27,7 +27,7 @@ env_runner:
 
 dataset:
   _target_: diffusion_policy_3d.dataset.droid_dataset.DroidDataset # same format as droid dataset 
-  zarr_path: data/final.zarr
+  zarr_path: data/final_no_eef.zarr
   horizon: ${horizon}
   pad_before: ${eval:'${n_obs_steps}-1'}
   pad_after: ${eval:'${n_action_steps}-1'}
