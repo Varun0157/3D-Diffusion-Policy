@@ -34,8 +34,6 @@ class UR5PyBulletRunner(BaseRunner):
                  image_size=224,
                  use_workspace_crop=True,
                  workspace_std=2.0,
-                 visualize_gt=True,
-                 plot_joint_deltas=True,  # NEW: Enable joint delta plotting
                  ):
         super().__init__(output_dir)
         
@@ -45,8 +43,6 @@ class UR5PyBulletRunner(BaseRunner):
         self.fps = fps
         self.crf = crf
         self.tqdm_interval_sec = tqdm_interval_sec
-        self.visualize_gt = visualize_gt
-        self.plot_joint_deltas = plot_joint_deltas  # NEW
         
         # Environment factory function
         def env_fn():
@@ -58,7 +54,6 @@ class UR5PyBulletRunner(BaseRunner):
                         image_size=image_size,
                         use_workspace_crop=use_workspace_crop,
                         workspace_std=workspace_std,
-                        visualize_gt=self.visualize_gt,
                     )
                 ),
                 n_obs_steps=n_obs_steps,
@@ -70,132 +65,30 @@ class UR5PyBulletRunner(BaseRunner):
         self.env_test = env_fn()
         self.episode_test = n_test
         self.logger_util_test = logger_util.LargestKRecorder(K=3)
-        
-    def plot_joint_deltas_comparison(self, pred_actions, gt_actions, episode_id):
-        """
-        Plot predicted vs ground truth joint angle deltas
-        
-        Args:
-            pred_actions: (T, action_dim) numpy array of predicted actions
-            gt_actions: (T, action_dim) numpy array of ground truth actions
-            episode_id: Episode identifier for the plot title
-        
-        Returns:
-            matplotlib figure object
-        """
-        # Debug: print shapes
-        print(f"pred_actions shape: {pred_actions.shape}")
-        print(f"gt_actions shape: {gt_actions.shape}")
-        
-        # Handle different action dimensions
-        # If actions are already just joint deltas (7D), use them directly
-        # If actions are full state (13D), extract last 7 dimensions
-        if pred_actions.shape[1] == 7:
-            pred_joint_deltas = pred_actions
-            gt_joint_deltas = gt_actions
-        elif pred_actions.shape[1] == 13:
-            # Extract joint deltas (last 7 dimensions: 6 arm joints + 1 gripper)
-            pred_joint_deltas = pred_actions[:, 6:13]  # Shape: (T, 7)
-            gt_joint_deltas = gt_actions[:, 6:13]      # Shape: (T, 7)
-        else:
-            raise ValueError(f"Unexpected action dimension: {pred_actions.shape[1]}")
-        
-        T = pred_joint_deltas.shape[0]
-        timesteps = np.arange(T)
-        
-        joint_names = [
-            'Joint 1', 'Joint 2', 'Joint 3', 
-            'Joint 4', 'Joint 5', 'Joint 6', 
-            'Gripper'
-        ]
-        
-        # Create a figure with subplots for each joint
-        fig, axes = plt.subplots(4, 2, figsize=(15, 12))
-        axes = axes.flatten()
-        
-        for i in range(7):
-            ax = axes[i]
-            
-            # Plot predicted and ground truth
-            ax.plot(timesteps, gt_joint_deltas[:, i], 
-                   label='Ground Truth', color='blue', linewidth=2, alpha=0.7)
-            ax.plot(timesteps, pred_joint_deltas[:, i], 
-                   label='Predicted', color='red', linewidth=2, alpha=0.7, linestyle='--')
-            
-            # Calculate error metrics
-            mse = np.mean((pred_joint_deltas[:, i] - gt_joint_deltas[:, i])**2)
-            mae = np.mean(np.abs(pred_joint_deltas[:, i] - gt_joint_deltas[:, i]))
-            
-            ax.set_title(f'{joint_names[i]}\nMSE: {mse:.6f}, MAE: {mae:.6f}')
-            ax.set_xlabel('Timestep')
-            ax.set_ylabel('Joint Angle Delta (rad)')
-            ax.legend()
-            ax.grid(True, alpha=0.3)
-        
-        # Remove the extra subplot
-        fig.delaxes(axes[7])
-        
-        # Add overall title
-        fig.suptitle(f'Episode {episode_id}: Predicted vs Ground Truth Joint Deltas', 
-                    fontsize=16, fontweight='bold')
-        
-        plt.tight_layout()
-        return fig
-    
+
     def run(self, policy: BasePolicy, dataset=None):
         """
-        Run evaluation with joint delta plotting
-        
+        Run evaluation
+
         Args:
             policy: Policy to evaluate
-            dataset: Optional dataset to extract GT trajectories from
+            dataset: Optional dataset (not used)
         """
         device = policy.device
 
         all_returns_test = []
         all_success_rates_test = []
-        
-        # Storage for plotting
-        all_pred_actions = []
-        all_gt_actions = []
 
         cprint("=" * 50, "cyan")
-        cprint("Running on TEST environment with Joint Delta Plotting", "cyan")
+        cprint("Running on TEST environment", "cyan")
         cprint("=" * 50, "cyan")
 
         for episode_id in range(self.episode_test):
-            # Extract GT trajectory from dataset
-            gt_actions_full = None
-            if dataset is not None:
-                try:
-                    val_dataset = dataset.get_validation_dataset()
-                    sample_idx = episode_id % len(val_dataset)
-                    sample = val_dataset[sample_idx]
-                    
-                    gt_actions_full = sample['action']  # Shape: (T, 13)
-                    
-                    if isinstance(gt_actions_full, torch.Tensor):
-                        gt_actions_full = gt_actions_full.cpu().numpy()
-                    
-                    # Set GT trajectory for visualization
-                    if self.visualize_gt:
-                        base_env = self.env_test.env.env
-                        base_env.set_gt_trajectory(gt_actions_full)
-                        base_env.enable_gt_visualization(True)
-                    
-                    cprint(f"[Episode {episode_id}] Loaded GT with {len(gt_actions_full)} waypoints", "cyan")
-                except Exception as e:
-                    cprint(f"[Warning] Could not load GT trajectory: {e}", "yellow")
-
             obs = self.env_test.reset()
             policy.reset()
 
             reward_sum = 0.0
             done = False
-            
-            # Storage for this episode
-            episode_pred_actions = []
-            episode_gt_actions = []
 
             for step_id in range(self.max_steps):
                 np_obs_dict = dict(obs)
@@ -223,41 +116,6 @@ class UR5PyBulletRunner(BaseRunner):
                     action = action.squeeze(0)  # Remove batch dim: (n_action_steps, action_dim)
                 elif action.ndim == 2 and action.shape[0] == 1:
                     action = action.squeeze(0)  # Remove batch dim if present
-                
-                # Debug: print action shape on first step
-                if step_id == 0 and episode_id == 0:
-                    print(f"Action shape from policy: {action.shape}")
-                    print(f"Action sample (first action): {action[0] if action.ndim == 2 else action}")
-                
-                # Store predicted action(s)
-                # If multi-step (n_action_steps, action_dim), store each action
-                if action.ndim == 2:
-                    for single_action in action:
-                        episode_pred_actions.append(single_action)
-                else:
-                    episode_pred_actions.append(action)
-                
-                # Store corresponding GT action(s) if available
-                # Need to account for n_action_steps
-                if gt_actions_full is not None:
-                    if action.ndim == 2:
-                        # Multi-step action, collect corresponding GT actions
-                        for i in range(action.shape[0]):
-                            gt_idx = step_id * action.shape[0] + i
-                            if gt_idx < len(gt_actions_full):
-                                gt_action = gt_actions_full[gt_idx]
-                                if step_id == 0 and i == 0 and episode_id == 0:
-                                    print(f"GT action shape: {gt_action.shape}")
-                                    print(f"GT action sample: {gt_action}")
-                                episode_gt_actions.append(gt_action)
-                    else:
-                        # Single-step action
-                        if step_id < len(gt_actions_full):
-                            gt_action = gt_actions_full[step_id]
-                            if step_id == 0 and episode_id == 0:
-                                print(f"GT action shape: {gt_action.shape}")
-                                print(f"GT action sample: {gt_action}")
-                            episode_gt_actions.append(gt_action)
 
                 obs, reward, done, info = self.env_test.step(action)
                 reward_sum += reward
@@ -268,18 +126,6 @@ class UR5PyBulletRunner(BaseRunner):
 
             all_returns_test.append(reward_sum)
             all_success_rates_test.append(self.env_test.env.is_success())
-            
-            # Store actions for this episode
-            if len(episode_pred_actions) > 0:
-                episode_pred_array = np.array(episode_pred_actions)
-                all_pred_actions.append(episode_pred_array)
-                if episode_id == 0:
-                    print(f"Episode 0 pred actions stored shape: {episode_pred_array.shape}")
-            if len(episode_gt_actions) > 0:
-                episode_gt_array = np.array(episode_gt_actions)
-                all_gt_actions.append(episode_gt_array)
-                if episode_id == 0:
-                    print(f"Episode 0 GT actions stored shape: {episode_gt_array.shape}")
 
             cprint(
                 f"Test Episode {episode_id}: "
@@ -308,68 +154,6 @@ class UR5PyBulletRunner(BaseRunner):
             "green"
         )
         cprint("=" * 50, "green")
-
-        # ---- Joint Delta Plotting ----
-        if self.plot_joint_deltas and len(all_pred_actions) > 0 and len(all_gt_actions) > 0:
-            cprint("=" * 50, "magenta")
-            cprint("Generating Joint Delta Plots", "magenta")
-            cprint("=" * 50, "magenta")
-            
-            # Plot for first 3 episodes (or fewer if less episodes ran)
-            num_plots = min(3, len(all_pred_actions), len(all_gt_actions))
-            
-            for i in range(num_plots):
-                pred = all_pred_actions[i]
-                gt = all_gt_actions[i]
-                
-                # Ensure same length (truncate to shorter)
-                min_len = min(len(pred), len(gt))
-                pred = pred[:min_len]
-                gt = gt[:min_len]
-                
-                fig = self.plot_joint_deltas_comparison(pred, gt, episode_id=i)
-                
-                # Log to wandb
-                log_data[f'joint_deltas_plot_ep{i}'] = wandb.Image(fig)
-                plt.close(fig)
-                
-                # Calculate overall metrics
-                joint_deltas_pred = pred[:, 6:13]
-                joint_deltas_gt = gt[:, 6:13]
-                
-                overall_mse = np.mean((joint_deltas_pred - joint_deltas_gt)**2)
-                overall_mae = np.mean(np.abs(joint_deltas_pred - joint_deltas_gt))
-                
-                log_data[f'joint_delta_mse_ep{i}'] = overall_mse
-                log_data[f'joint_delta_mae_ep{i}'] = overall_mae
-                
-                cprint(f"Episode {i} - Overall Joint Delta MSE: {overall_mse:.6f}, MAE: {overall_mae:.6f}", "cyan")
-            
-            # Calculate average metrics across all episodes
-            if len(all_pred_actions) > 0:
-                all_mses = []
-                all_maes = []
-                
-                for pred, gt in zip(all_pred_actions, all_gt_actions):
-                    min_len = min(len(pred), len(gt))
-                    pred = pred[:min_len]
-                    gt = gt[:min_len]
-                    
-                    joint_deltas_pred = pred[:, 6:13]
-                    joint_deltas_gt = gt[:, 6:13]
-                    
-                    mse = np.mean((joint_deltas_pred - joint_deltas_gt)**2)
-                    mae = np.mean(np.abs(joint_deltas_pred - joint_deltas_gt))
-                    
-                    all_mses.append(mse)
-                    all_maes.append(mae)
-                
-                log_data['avg_joint_delta_mse'] = np.mean(all_mses)
-                log_data['avg_joint_delta_mae'] = np.mean(all_maes)
-                
-                cprint(f"Average across all episodes:", "green")
-                cprint(f"  Joint Delta MSE: {log_data['avg_joint_delta_mse']:.6f}", "green")
-                cprint(f"  Joint Delta MAE: {log_data['avg_joint_delta_mae']:.6f}", "green")
 
         # ---- Video logging ----
         try:

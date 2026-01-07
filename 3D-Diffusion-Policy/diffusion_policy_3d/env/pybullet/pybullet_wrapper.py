@@ -259,8 +259,8 @@ class UR5PickPlaceEnv(gym.Env):
     """
     metadata = {"render.modes": ["rgb_array"], "video.frames_per_second": 10}
 
-    def __init__(self, use_gui=False, num_points=2500, image_size=224, 
-                 use_workspace_crop=True, workspace_std=2.0, visualize_gt=False):
+    def __init__(self, use_gui=False, num_points=2500, image_size=224,
+                 use_workspace_crop=True, workspace_std=2.0):
         self.use_gui = use_gui
         self.num_points = num_points
         self.image_size = image_size
@@ -269,11 +269,6 @@ class UR5PickPlaceEnv(gym.Env):
         self.use_workspace_crop = use_workspace_crop
         self.workspace_std = workspace_std
         self.workspace_bounds = None
-        self.visualize_gt = visualize_gt  # NEW: Flag for GT visualization
-
-        # NEW: Storage for GT trajectory
-        self.gt_eef_positions = []
-        self.gt_sphere_ids = []
 
         # Connect to PyBullet
         if self.use_gui:
@@ -334,70 +329,6 @@ class UR5PickPlaceEnv(gym.Env):
 
         self.is_success_flag = False
 
-    def set_gt_trajectory(self, gt_trajectory):
-        """
-        Set ground truth trajectory for visualization
-        
-        Args:
-            gt_trajectory: numpy array or torch tensor of shape (T, 13) 
-                          or (T, 7) where first 3 dims are EEF positions
-        """
-        # Robust conversion from Tensor to Numpy
-        if isinstance(gt_trajectory, torch.Tensor):
-            # detach() is required if the tensor tracks gradients
-            gt_trajectory = gt_trajectory.detach().cpu().numpy()
-        elif not isinstance(gt_trajectory, np.ndarray):
-            # Fallback for lists or other iterables
-            gt_trajectory = np.array(gt_trajectory)
-        
-        # Now we are guaranteed to have a numpy array
-        self.gt_eef_positions = gt_trajectory[:, :3].copy()  # Extract x, y, z positions
-        cprint(f"[GT Traj] Set {len(self.gt_eef_positions)} waypoints", "cyan")
-        
-    def enable_gt_visualization(self, enable=True):
-        """Enable or disable GT trajectory visualization"""
-        self.visualize_gt = enable
-
-    def _clear_gt_spheres(self):
-        """Remove all GT trajectory spheres"""
-        for sphere_id in self.gt_sphere_ids:
-            try:
-                p.removeBody(sphere_id)
-            except:
-                pass
-        self.gt_sphere_ids = []
-
-    def _visualize_gt_trajectory(self):
-        """Visualize ground truth trajectory as blue spheres"""
-        if not self.visualize_gt or len(self.gt_eef_positions) == 0:
-            return
-
-        # Clear old spheres
-        self._clear_gt_spheres()
-
-        # Create blue spheres at GT positions
-        for pos in self.gt_eef_positions:
-            # Create small blue sphere
-            sphere_visual = p.createVisualShape(
-                shapeType=p.GEOM_SPHERE,
-                radius=0.015,  # 1.5cm radius
-                rgbaColor=[0.0, 0.0, 1.0, 0.6]  # Blue with transparency
-            )
-            
-            sphere_collision = p.createCollisionShape(
-                shapeType=p.GEOM_SPHERE,
-                radius=0.001  # Tiny collision to avoid interference
-            )
-            
-            sphere_id = p.createMultiBody(
-                baseMass=0,  # Static object
-                baseCollisionShapeIndex=sphere_collision,
-                baseVisualShapeIndex=sphere_visual,
-                basePosition=pos
-            )
-            
-            self.gt_sphere_ids.append(sphere_id)
-
     def reset(self):
         """Reset the environment"""
         self.current_step = 0
@@ -407,10 +338,6 @@ class UR5PickPlaceEnv(gym.Env):
         # Remove old cube if exists
         if self.cube_id is not None:
             p.removeBody(self.cube_id)
-
-        # Clear GT trajectory spheres
-        self._clear_gt_spheres()
-        self.gt_eef_positions = []
 
         # Reset robot to rest pose
         target_joint_positions = [0, -1.57, 1.57, -1.5, -1.57, 0.0]
@@ -439,9 +366,6 @@ class UR5PickPlaceEnv(gym.Env):
         for _ in range(50):
             p.stepSimulation()
 
-        # Visualize GT trajectory if available
-        self._visualize_gt_trajectory()
-
         obs = self._get_obs()
         return obs
 
@@ -449,13 +373,20 @@ class UR5PickPlaceEnv(gym.Env):
         """
         Execute action and return observation.
 
-        Action is 13D: [eef_pos(3), eef_orn(3), joint_deltas(6), gripper_delta(1)]
-        - First 6D (eef_pos + eef_orn): Not used
-        - Last 7D: DELTA joint angles applied to current joint positions
+        Action can be:
+        - 7D: [joint_deltas(6), gripper_delta(1)] - DELTA joint angles
+        - 13D: [eef_pos(3), eef_orn(3), joint_deltas(6), gripper_delta(1)]
+               where first 6D are not used, last 7D are DELTA joint angles
         """
         self.current_step += 1
 
-        joint_deltas = action[6:13]
+        # Handle both 7D and 13D action spaces
+        if len(action) == 13:
+            joint_deltas = action[6:13]
+        elif len(action) == 7:
+            joint_deltas = action
+        else:
+            raise ValueError(f"Action must be 7D or 13D, got {len(action)}D")
 
         current_joint_positions = self.robot.get_joint_positions()
 
@@ -572,7 +503,6 @@ class UR5PickPlaceEnv(gym.Env):
 
     def close(self):
         """Close the environment"""
-        self._clear_gt_spheres()
         p.disconnect(self.physics_client)
 
     def is_success(self):
