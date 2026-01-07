@@ -425,7 +425,17 @@ class UR5PickPlaceEnv(gym.Env):
 
     def _get_obs(self):
         """Get current observation"""
-        agent_pos = self.robot.get_robot_state()
+        robot_state = self.robot.get_robot_state()  # Always 13D
+
+        # Extract appropriate agent_pos based on action_dim
+        if self.action_dim == 7:
+            # Return only joint positions (last 7 elements: 6 arm + 1 gripper)
+            agent_pos = robot_state[6:13]
+        elif self.action_dim == 13:
+            # Return full state (eef_pos + eef_orn + joints + gripper)
+            agent_pos = robot_state
+        else:
+            raise ValueError(f"Unsupported action_dim: {self.action_dim}. Must be 7 or 13.")
 
         view_matrix = p.computeViewMatrix(
             cameraEyePosition=self.tp_cam_eye,
