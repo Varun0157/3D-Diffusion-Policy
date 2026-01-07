@@ -21,6 +21,7 @@ env_runner:
   n_obs_steps: ${n_obs_steps}
   n_action_steps: ${n_action_steps}
   fps: 10
+  action_dim: ${eval:'${shape_meta.action.shape}[0]'}
   # task_name: pick_place we don't need this for pybullet env
 
 dataset:

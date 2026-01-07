@@ -34,16 +34,18 @@ class UR5PyBulletRunner(BaseRunner):
                  image_size=224,
                  use_workspace_crop=True,
                  workspace_std=2.0,
+                 action_dim=7,
                  ):
         super().__init__(output_dir)
-        
+
         self.max_steps = max_steps
         self.n_obs_steps = n_obs_steps
         self.n_action_steps = n_action_steps
         self.fps = fps
         self.crf = crf
         self.tqdm_interval_sec = tqdm_interval_sec
-        
+        self.action_dim = action_dim
+
         # Environment factory function
         def env_fn():
             return MultiStepWrapper(
@@ -54,6 +56,7 @@ class UR5PyBulletRunner(BaseRunner):
                         image_size=image_size,
                         use_workspace_crop=use_workspace_crop,
                         workspace_std=workspace_std,
+                        action_dim=self.action_dim,
                     )
                 ),
                 n_obs_steps=n_obs_steps,

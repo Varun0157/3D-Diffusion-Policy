@@ -260,7 +260,7 @@ class UR5PickPlaceEnv(gym.Env):
     metadata = {"render.modes": ["rgb_array"], "video.frames_per_second": 10}
 
     def __init__(self, use_gui=False, num_points=2500, image_size=224,
-                 use_workspace_crop=True, workspace_std=2.0):
+                 use_workspace_crop=True, workspace_std=2.0, action_dim=7):
         self.use_gui = use_gui
         self.num_points = num_points
         self.image_size = image_size
@@ -269,6 +269,7 @@ class UR5PickPlaceEnv(gym.Env):
         self.use_workspace_crop = use_workspace_crop
         self.workspace_std = workspace_std
         self.workspace_bounds = None
+        self.action_dim = action_dim  # Support both 7D and 13D action spaces
 
         # Connect to PyBullet
         if self.use_gui:
@@ -302,7 +303,7 @@ class UR5PickPlaceEnv(gym.Env):
         self.action_space = spaces.Box(
             low=-0.1,
             high=0.1,
-            shape=(13,),
+            shape=(self.action_dim,),
             dtype=np.float32
         )
 
@@ -316,7 +317,7 @@ class UR5PickPlaceEnv(gym.Env):
             'agent_pos': spaces.Box(
                 low=-np.inf,
                 high=np.inf,
-                shape=(13,),
+                shape=(self.action_dim,),
                 dtype=np.float32
             ),
             'image': spaces.Box(
