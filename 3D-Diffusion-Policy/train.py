@@ -366,34 +366,67 @@ class TrainDP3Workspace:
 
     def eval(self):
         # load the latest checkpoint
-
+        print("Hellooooooo")
         cfg = copy.deepcopy(self.cfg)
-
+        
+        # print(cfg)
         lastest_ckpt_path = self.get_checkpoint_path(tag="latest")
         if lastest_ckpt_path.is_file():
             cprint(f"Resuming from checkpoint {lastest_ckpt_path}", "magenta")
             self.load_checkpoint(path=lastest_ckpt_path)
 
+        lastest_ckpt_path = "/scratch2/cross-emb/DP3_outputs/pybullet_pick_place-dp3-no_eef_seed0/checkpoints"
+
+        print(f"Checkpoint is loaded from : {lastest_ckpt_path}")
+
         dataset: BaseDataset = hydra.utils.instantiate(cfg.task.dataset)
-        # configure env
-        env_runner: BaseRunner
-        env_runner = hydra.utils.instantiate(
-            cfg.task.env_runner, output_dir=self.output_dir
-        )
-        assert isinstance(env_runner, BaseRunner)
+        normalizer = dataset.get_normalizer()
+        
+        # Set normalizer for the model (this is CRITICAL)
+        self.model.set_normalizer(normalizer)
+        if cfg.training.use_ema:
+            self.ema_model.set_normalizer(normalizer)
+        
+        # Select policy
         policy = self.model
         if cfg.training.use_ema:
             policy = self.ema_model
         policy.eval()
         policy.cuda()
 
-        # Run evaluation with dataset for GT visualization
+        # DEBUG: Verify normalizer is set correctly
+        cprint("=" * 50, "yellow")
+        cprint("NORMALIZER KEYS:", "yellow")
+        cprint(f"{list(policy.normalizer.params_dict.keys())}", "yellow")
+        # cprint("=" * 50, "yellow")
+
+        # Configure environment runner
+        env_runner: BaseRunner = hydra.utils.instantiate(
+            cfg.task.env_runner, output_dir=self.output_dir
+        )
+        assert isinstance(env_runner, BaseRunner)
+
+        # Check environment observation keys
+        obs = env_runner.env_test.reset()
+        cprint("=" * 50, "cyan")
+        cprint("ENVIRONMENT OBSERVATION KEYS:", "cyan")
+        cprint(f"{list(obs.keys())}", "cyan")
+        cprint("=" * 50, "cyan")
+
+        # Run evaluation
+        cprint(f"Running evaluation with policy...", "green")
         runner_log = env_runner.run(policy, dataset=dataset)
 
-        cprint(f"---------------- Eval Results --------------", "magenta")
+        # Print results
+        cprint("=" * 50, "magenta")
+        cprint("EVALUATION RESULTS:", "magenta")
         for key, value in runner_log.items():
-            if isinstance(value, float):
-                cprint(f"{key}: {value:.4f}", "magenta")
+            if isinstance(value, (int, float)):
+                cprint(f"  {key}: {value:.4f}", "magenta")
+        cprint("=" * 50, "magenta")
+
+        return runner_log
+
 
     @property
     def output_dir(self):

@@ -75,9 +75,13 @@ class UR5PyBulletRunner(BaseRunner):
 
         Args:
             policy: Policy to evaluate
-            dataset: Optional dataset (not used)
+            dataset: Optional dataset for key mapping reference
         """
         device = policy.device
+
+        # Check what keys the policy normalizer expects
+        normalizer_keys = list(policy.normalizer.params_dict.keys())
+        cprint(f"Policy expects observation keys: {normalizer_keys}", "yellow")
 
         all_returns_test = []
         all_success_rates_test = []
@@ -88,6 +92,11 @@ class UR5PyBulletRunner(BaseRunner):
 
         for episode_id in range(self.episode_test):
             obs = self.env_test.reset()
+            
+            # Debug: print environment keys on first episode
+            if episode_id == 0:
+                cprint(f"Environment provides keys: {list(obs.keys())}", "yellow")
+            
             policy.reset()
 
             reward_sum = 0.0
@@ -98,14 +107,18 @@ class UR5PyBulletRunner(BaseRunner):
 
                 obs_dict = dict_apply(
                     np_obs_dict,
-                    lambda x: torch.from_numpy(x).to(device=device)
+                    lambda x: torch.from_numpy(x).to(device=device, non_blocking=True)
                 )
 
+                policy_obs = {}
+
+                for key in policy.normalizer.params_dict.keys():
+                    if key == "action":
+                        continue  
+                    policy_obs[key] = obs_dict[key].unsqueeze(0)
+            
                 with torch.no_grad():
-                    action_dict = policy.predict_action({
-                        'point_cloud': obs_dict['point_cloud'].unsqueeze(0),
-                        'agent_pos': obs_dict['agent_pos'].unsqueeze(0)
-                    })
+                    action_dict = policy.predict_action(policy_obs)
 
                 # Extract action - handle both single and multi-step actions
                 action = dict_apply(

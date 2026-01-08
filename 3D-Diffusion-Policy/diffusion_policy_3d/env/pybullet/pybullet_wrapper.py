@@ -397,6 +397,30 @@ class UR5PickPlaceEnv(gym.Env):
 
         self.robot.set_joint_positions(target_joint_positions)
 
+        actual_joint_positions = self.robot.get_joint_positions()
+        
+        print("\n=== Joint Prediction Debug ===")
+
+        for i, (q_curr, dq, q_tgt, q_act) in enumerate(
+            zip(
+                current_joint_positions,
+                joint_deltas,
+                target_joint_positions,
+                actual_joint_positions,
+            )
+        ):
+            print(
+                f"Joint {i:02d} | "
+                f"curr: {q_curr:+.4f} | "
+                f"Δpred: {dq:+.4f} | "
+                f"target: {q_tgt:+.4f} | "
+                f"actual: {q_act:+.4f} | "
+                f"err: {(q_act - q_tgt):+.4f}"
+            )
+
+        print("==============================\n")
+
+
         for _ in range(50):
             p.stepSimulation()
 
