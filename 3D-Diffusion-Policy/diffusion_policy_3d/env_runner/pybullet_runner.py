@@ -14,6 +14,20 @@ from diffusion_policy_3d.common.pytorch_util import dict_apply
 from diffusion_policy_3d.env_runner.base_runner import BaseRunner
 import diffusion_policy_3d.common.logger_util as logger_util
 
+import open3d as o3d
+import numpy as np
+
+
+import open3d as o3d
+import numpy as np
+import os
+
+def save_pointcloud(pc, fname="debug_pc.ply"):
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(pc.astype(np.float64))
+    o3d.io.write_point_cloud(fname, pcd)
+    print(f"[PCD] saved to {fname}")
+
 
 class UR5PyBulletRunner(BaseRunner):
     """
@@ -29,7 +43,7 @@ class UR5PyBulletRunner(BaseRunner):
                  fps=10,
                  crf=22,
                  tqdm_interval_sec=5.0,
-                 use_gui=False,
+                 use_gui=True,
                  num_points=1024,
                  image_size=224,
                  use_workspace_crop=True,
@@ -69,6 +83,10 @@ class UR5PyBulletRunner(BaseRunner):
         self.episode_test = n_test
         self.logger_util_test = logger_util.LargestKRecorder(K=3)
 
+
+
+
+
     def run(self, policy: BasePolicy, dataset=None):
         """
         Run evaluation
@@ -102,6 +120,7 @@ class UR5PyBulletRunner(BaseRunner):
             reward_sum = 0.0
             done = False
 
+    
             for step_id in range(self.max_steps):
                 np_obs_dict = dict(obs)
 
@@ -110,6 +129,10 @@ class UR5PyBulletRunner(BaseRunner):
                     lambda x: torch.from_numpy(x).to(device=device, non_blocking=True)
                 )
 
+                pc = obs["point_cloud"]
+                if pc.ndim == 3:
+                    pc = pc[-1]
+                save_pointcloud(pc, "env_pc.ply")
                 policy_obs = {}
 
                 for key in policy.normalizer.params_dict.keys():
