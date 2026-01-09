@@ -56,6 +56,7 @@ class UR5PyBulletRunner(BaseRunner):
         workspace_std=2.0,
         action_dim=7,
     ):
+
         super().__init__(output_dir)
 
         self.max_steps = max_steps
