@@ -3,11 +3,14 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 import matplotlib
-matplotlib.use('Agg')  # For headless plotting
+
+matplotlib.use("Agg")  # For headless plotting
 from termcolor import cprint
 from diffusion_policy_3d.env import UR5PickPlaceEnv
 from diffusion_policy_3d.gym_util.multistep_wrapper import MultiStepWrapper
-from diffusion_policy_3d.gym_util.video_recording_wrapper import SimpleVideoRecordingWrapper
+from diffusion_policy_3d.gym_util.video_recording_wrapper import (
+    SimpleVideoRecordingWrapper,
+)
 
 from diffusion_policy_3d.policy.base_policy import BasePolicy
 from diffusion_policy_3d.common.pytorch_util import dict_apply
@@ -22,6 +25,7 @@ import open3d as o3d
 import numpy as np
 import os
 
+
 def save_pointcloud(pc, fname="debug_pc.ply"):
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(pc.astype(np.float64))
@@ -33,23 +37,25 @@ class UR5PyBulletRunner(BaseRunner):
     """
     Extended runner that plots predicted vs ground truth joint angle deltas
     """
-    def __init__(self,
-                 output_dir,
-                 n_train=10,
-                 n_test=10,
-                 max_steps=350,
-                 n_obs_steps=2,
-                 n_action_steps=8,
-                 fps=10,
-                 crf=22,
-                 tqdm_interval_sec=5.0,
-                 use_gui=True,
-                 num_points=1024,
-                 image_size=224,
-                 use_workspace_crop=True,
-                 workspace_std=2.0,
-                 action_dim=7,
-                 ):
+
+    def __init__(
+        self,
+        output_dir,
+        n_train=10,
+        n_test=10,
+        max_steps=350,
+        n_obs_steps=2,
+        n_action_steps=8,
+        fps=10,
+        crf=22,
+        tqdm_interval_sec=5.0,
+        use_gui=False,
+        num_points=1024,
+        image_size=224,
+        use_workspace_crop=True,
+        workspace_std=2.0,
+        action_dim=7,
+    ):
         super().__init__(output_dir)
 
         self.max_steps = max_steps
@@ -76,16 +82,12 @@ class UR5PyBulletRunner(BaseRunner):
                 n_obs_steps=n_obs_steps,
                 n_action_steps=n_action_steps,
                 max_episode_steps=max_steps,
-                reward_agg_method='sum',
+                reward_agg_method="sum",
             )
-        
+
         self.env_test = env_fn()
         self.episode_test = n_test
         self.logger_util_test = logger_util.LargestKRecorder(K=3)
-
-
-
-
 
     def run(self, policy: BasePolicy, dataset=None):
         """
@@ -110,23 +112,22 @@ class UR5PyBulletRunner(BaseRunner):
 
         for episode_id in range(self.episode_test):
             obs = self.env_test.reset()
-            
+
             # Debug: print environment keys on first episode
             if episode_id == 0:
                 cprint(f"Environment provides keys: {list(obs.keys())}", "yellow")
-            
+
             policy.reset()
 
             reward_sum = 0.0
             done = False
 
-    
             for step_id in range(self.max_steps):
                 np_obs_dict = dict(obs)
 
                 obs_dict = dict_apply(
                     np_obs_dict,
-                    lambda x: torch.from_numpy(x).to(device=device, non_blocking=True)
+                    lambda x: torch.from_numpy(x).to(device=device, non_blocking=True),
                 )
 
                 pc = obs["point_cloud"]
@@ -137,22 +138,23 @@ class UR5PyBulletRunner(BaseRunner):
 
                 for key in policy.normalizer.params_dict.keys():
                     if key == "action":
-                        continue  
+                        continue
                     policy_obs[key] = obs_dict[key].unsqueeze(0)
-            
+
                 with torch.no_grad():
                     action_dict = policy.predict_action(policy_obs)
 
                 # Extract action - handle both single and multi-step actions
-                action = dict_apply(
-                    action_dict,
-                    lambda x: x.detach().cpu().numpy()
-                )['action']
-                
+                action = dict_apply(action_dict, lambda x: x.detach().cpu().numpy())[
+                    "action"
+                ]
+
                 # MultiStepWrapper may return (1, n_action_steps, action_dim)
                 # or (n_action_steps, action_dim), we need to flatten properly
                 if action.ndim == 3:
-                    action = action.squeeze(0)  # Remove batch dim: (n_action_steps, action_dim)
+                    action = action.squeeze(
+                        0
+                    )  # Remove batch dim: (n_action_steps, action_dim)
                 elif action.ndim == 2 and action.shape[0] == 1:
                     action = action.squeeze(0)  # Remove batch dim if present
 
@@ -170,7 +172,7 @@ class UR5PyBulletRunner(BaseRunner):
                 f"Test Episode {episode_id}: "
                 f"Reward={reward_sum:.2f}, "
                 f"Success={self.env_test.env.is_success()}",
-                "yellow"
+                "yellow",
             )
 
         # ---- Metrics ----
@@ -180,17 +182,17 @@ class UR5PyBulletRunner(BaseRunner):
         self.logger_util_test.record(SR_mean_test)
 
         log_data = {
-            'mean_success_rates_test': SR_mean_test,
-            'mean_returns_test': returns_mean_test,
-            'SR_test_L3': self.logger_util_test.average_of_largest_K(),
-            'test_mean_score': SR_mean_test
+            "mean_success_rates_test": SR_mean_test,
+            "mean_returns_test": returns_mean_test,
+            "SR_test_L3": self.logger_util_test.average_of_largest_K(),
+            "test_mean_score": SR_mean_test,
         }
 
         cprint("=" * 50, "green")
         cprint(
             f"Test - Mean SR: {SR_mean_test:.3f}, "
             f"Mean Return: {returns_mean_test:.3f}",
-            "green"
+            "green",
         )
         cprint("=" * 50, "green")
 
@@ -200,7 +202,7 @@ class UR5PyBulletRunner(BaseRunner):
             if len(videos_test.shape) == 5:
                 videos_test = videos_test[:, 0]
 
-            log_data['sim_video_test'] = wandb.Video(
+            log_data["sim_video_test"] = wandb.Video(
                 videos_test, fps=self.fps, format="mp4"
             )
             cprint("✓ Test video captured", "cyan")
@@ -214,3 +216,4 @@ class UR5PyBulletRunner(BaseRunner):
             pass
 
         return log_data
+
