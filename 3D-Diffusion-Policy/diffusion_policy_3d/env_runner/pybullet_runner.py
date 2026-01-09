@@ -44,7 +44,7 @@ class UR5PyBulletRunner(BaseRunner):
                  crf=22,
                  tqdm_interval_sec=5.0,
                  use_gui=True,
-                 num_points=1024,
+                 num_points=6000,
                  image_size=224,
                  use_workspace_crop=True,
                  workspace_std=2.0,
