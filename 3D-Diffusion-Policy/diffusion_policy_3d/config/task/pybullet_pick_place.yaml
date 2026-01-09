@@ -2,11 +2,10 @@ name: ur5_pick_place
 
 task_name: pick_place
 
-shape_meta: &shape_meta
-  # acceptable types: rgb, low_dim
+shape_meta: &shape_meta # acceptable types: rgb, low_dim
   obs:
     point_cloud:
-      shape: [2500, 3]
+      shape: [6000, 3]
       type: point_cloud
     agent_pos:
       shape: [7]
@@ -25,13 +24,11 @@ env_runner:
   # task_name: pick_place we don't need this for pybullet env
 
 dataset:
-  _target_: diffusion_policy_3d.dataset.droid_dataset.DroidDataset # same format as droid dataset 
+  _target_: diffusion_policy_3d.dataset.droid_dataset.DroidDataset # same format as droid dataset
   zarr_path: data/final_no_eef.zarr
   horizon: ${horizon}
   pad_before: ${eval:'${n_obs_steps}-1'}
   pad_after: ${eval:'${n_action_steps}-1'}
   seed: 42
   val_ratio: 0.02
-  max_train_episodes: null 
-
-
+  max_train_episodes: null
