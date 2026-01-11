@@ -253,6 +253,14 @@ class TrainDP3Workspace:
             if cfg.training.use_ema:
                 policy = self.ema_model
             policy.eval()
+            
+            """
+            1. We run rollout on random envs every N epochs (not training data nor validation data) 
+            -> just randomly places the cube in the env and runs the policy
+
+            2. We run validation on the validation dataset every N epochs
+            -> this is similar to training, but on the validation set
+            """
 
             # run rollout
             if (
@@ -370,27 +378,33 @@ class TrainDP3Workspace:
         cfg = copy.deepcopy(self.cfg)
         
         # print(cfg)
-        lastest_ckpt_path = self.get_checkpoint_path(tag="latest")
-        if lastest_ckpt_path.is_file():
-            cprint(f"Resuming from checkpoint {lastest_ckpt_path}", "magenta")
-            self.load_checkpoint(path=lastest_ckpt_path)
-
-        lastest_ckpt_path = "/scratch2/cross-emb/DP3_outputs/pybullet_pick_place-dp3-no_eef_seed0/checkpoints"
-
+        # lastest_ckpt_path = self.get_checkpoint_path(tag="latest")
+        # if lastest_ckpt_path.is_file():
+            # cprint(f"Resuming from checkpoint {lastest_ckpt_path}", "magenta")
+            # self.load_checkpoint(path=lastest_ckpt_path)
+        #  
+        # lastest_ckpt_path = "/scratch2/cross-emb/DP3_outputs/pybullet_pick_place-dp3-no_eef_seed0/checkpoints"
+        # lastest_ckpt_path = "/home/aniruth/Desktop/RRC/3D-Diffusion-Policy/checkpoints/latest.ckpt"
+        lastest_ckpt_path = "/home/aniruth/Desktop/RRC/3D-Diffusion-Policy/checkpoints/6k-ckpts/latest.ckpt"
         print(f"Checkpoint is loaded from : {lastest_ckpt_path}")
-
+        
+        self.load_checkpoint(path=lastest_ckpt_path)
+        
         dataset: BaseDataset = hydra.utils.instantiate(cfg.task.dataset)
         normalizer = dataset.get_normalizer()
+
         
-        # Set normalizer for the model (this is CRITICAL)
         self.model.set_normalizer(normalizer)
         if cfg.training.use_ema:
             self.ema_model.set_normalizer(normalizer)
         
-        # Select policy
+        
         policy = self.model
         if cfg.training.use_ema:
             policy = self.ema_model
+            print("Using EMA model for evaluation")
+
+
         policy.eval()
         policy.cuda()
 
@@ -415,7 +429,7 @@ class TrainDP3Workspace:
 
         # Run evaluation
         cprint(f"Running evaluation with policy...", "green")
-        runner_log = env_runner.run(policy, dataset=dataset)
+        runner_log = env_runner.run(policy)
 
         # Print results
         cprint("=" * 50, "magenta")
