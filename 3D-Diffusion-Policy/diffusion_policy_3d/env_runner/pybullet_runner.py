@@ -18,10 +18,6 @@ import open3d as o3d
 import numpy as np
 
 
-import open3d as o3d
-import numpy as np
-import os
-
 def save_pointcloud(pc, fname="debug_pc.ply"):
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(pc.astype(np.float64))
@@ -31,7 +27,7 @@ def save_pointcloud(pc, fname="debug_pc.ply"):
 
 class UR5PyBulletRunner(BaseRunner):
     """
-    Extended runner that plots predicted vs ground truth joint angle deltas
+    Extended runner that uses validation dataset cube positions for evaluation
     """
     def __init__(self,
                  output_dir,
@@ -83,17 +79,13 @@ class UR5PyBulletRunner(BaseRunner):
         self.episode_test = n_test
         self.logger_util_test = logger_util.LargestKRecorder(K=3)
 
-
-
-
-
     def run(self, policy: BasePolicy, dataset=None):
         """
-        Run evaluation
+        Run evaluation using validation dataset cube positions
 
         Args:
             policy: Policy to evaluate
-            dataset: Optional dataset for key mapping reference
+            dataset: Validation dataset to get cube positions from
         """
         device = policy.device
 
@@ -105,11 +97,45 @@ class UR5PyBulletRunner(BaseRunner):
         all_success_rates_test = []
 
         cprint("=" * 50, "cyan")
-        cprint("Running on TEST environment", "cyan")
+        cprint("Running on TEST environment with VALIDATION dataset cube positions", "cyan")
         cprint("=" * 50, "cyan")
 
         for episode_id in range(self.episode_test):
-            obs = self.env_test.reset()
+            # Get cube start position from validation dataset if available
+            cube_start_pos = None
+            if dataset is not None:
+                try:
+                    # Get the episode index from validation set
+                    val_episode_indices = np.where(~dataset.train_mask)[0]
+                    
+                    if episode_id < len(val_episode_indices):
+                        val_ep_idx = val_episode_indices[episode_id]
+                        cube_pos_full = dataset.get_episode_cube_start_pos(val_ep_idx)
+                    
+                        # Extract position (first 3 elements) and orientation (last 4 elements)
+                        cube_start_pos = cube_pos_full[:3].tolist()
+                        cube_start_orn = cube_pos_full[3:7].tolist()
+                        cprint(f"Episode {episode_id}: Using cube position from val dataset: {cube_start_pos}", "green")
+                    
+                    else:
+                        cprint(f"Episode {episode_id}: No more validation episodes, using random position", "yellow")
+                        cube_start_pos = None
+                    
+                        cube_start_orn = None
+                except Exception as e:
+                    cprint(f"Episode {episode_id}: Could not load cube position from dataset: {e}", "red")
+                    cprint("Falling back to random cube position", "yellow")
+                    cube_start_pos = None
+                    cube_start_orn = None
+            
+            # Reset environment with specified or random cube position
+            if cube_start_pos is not None:
+                obs = self.env_test.env.env.reset(cube_start_pos=cube_start_pos, cube_start_orn=cube_start_orn)
+                # Need to reset the wrappers' state too
+                self.env_test.env.step_count = 0
+                self.env_test.step_count = 0
+            else:
+                obs = self.env_test.reset()
             
             # Debug: print environment keys on first episode
             if episode_id == 0:
@@ -120,7 +146,6 @@ class UR5PyBulletRunner(BaseRunner):
             reward_sum = 0.0
             done = False
 
-    
             for step_id in range(self.max_steps):
                 np_obs_dict = dict(obs)
 
@@ -129,10 +154,13 @@ class UR5PyBulletRunner(BaseRunner):
                     lambda x: torch.from_numpy(x).to(device=device, non_blocking=True)
                 )
 
-                pc = obs["point_cloud"]
-                if pc.ndim == 3:
-                    pc = pc[-1]
-                save_pointcloud(pc, "env_pc.ply")
+                # Debug: save point cloud on first step
+                if step_id == 0 and episode_id == 0:
+                    pc = obs["point_cloud"]
+                    if pc.ndim == 3:
+                        pc = pc[-1]
+                    save_pointcloud(pc, "env_pc.ply")
+                
                 policy_obs = {}
 
                 for key in policy.normalizer.params_dict.keys():
