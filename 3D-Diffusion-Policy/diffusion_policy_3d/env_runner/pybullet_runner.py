@@ -102,6 +102,15 @@ class UR5PyBulletRunner(BaseRunner):
         cprint("Running on TEST environment with VALIDATION dataset cube positions", "cyan")
         cprint("=" * 50, "cyan")
 
+        if dataset is not None:
+            val_episode_indices = np.where(~dataset.train_mask)[0]
+            n_val_episodes = len(val_episode_indices)
+            cprint(f"Validation dataset has {n_val_episodes} episodes", "cyan")
+            cprint(f"Running {self.episode_test} test episodes", "cyan")
+            if n_val_episodes < self.episode_test:
+                cprint(f"WARNING: Only {n_val_episodes} validation episodes available, but running {self.episode_test} test episodes", "yellow")
+                cprint(f"Episodes {n_val_episodes}-{self.episode_test-1} will use random cube positions", "yellow")
+                
         for episode_id in range(self.episode_test):
             # Get cube start position from validation dataset if available
             cube_start_pos = None
