@@ -3,7 +3,7 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 import matplotlib
-matplotlib.use('Agg')  # For headless plotting
+matplotlib.use('Agg')
 from termcolor import cprint
 from diffusion_policy_3d.env import UR5PickPlaceEnv
 from diffusion_policy_3d.gym_util.multistep_wrapper import MultiStepWrapper
@@ -68,7 +68,7 @@ class UR5PyBulletRunner(BaseRunner):
                         use_workspace_crop=use_workspace_crop,
                         workspace_std=workspace_std,
                         action_dim=self.action_dim,
-                        capture_table=False,  # Don't capture table in point clouds
+                        capture_table=False,
                     )
                 ),
                 n_obs_steps=n_obs_steps,
@@ -197,8 +197,26 @@ class UR5PyBulletRunner(BaseRunner):
                         continue
                     
                     if key in obs_dict:
-                        # Add batch dimension: (B, ...)
-                        policy_obs[key] = obs_dict[key].unsqueeze(0)
+                        tensor = obs_dict[key]
+                        
+                        # Handle point_cloud specially - it may already be stacked
+                        if key == "point_cloud":
+                            if tensor.ndim == 3:
+                                # Already stacked: (n_obs_steps, num_points, 3)
+                                # Add batch dimension: (1, n_obs_steps, num_points, 3)
+                                policy_obs[key] = tensor.unsqueeze(0)
+                            elif tensor.ndim == 2:
+                                # Single frame: (num_points, 3)
+                                # Add batch and time dims: (1, 1, num_points, 3)
+                                policy_obs[key] = tensor.unsqueeze(0).unsqueeze(0)
+                        else:
+                            # For other keys (agent_pos, image), just add batch dimension
+                            if tensor.ndim == 1:
+                                # Single frame: (D,) -> (1, D)
+                                policy_obs[key] = tensor.unsqueeze(0)
+                            else:
+                                # Already stacked: (n_obs_steps, ...) -> (1, n_obs_steps, ...)
+                                policy_obs[key] = tensor.unsqueeze(0)
                     else:
                         cprint(f"WARNING: Policy expects key '{key}' but not in observation!", "red")
                 
