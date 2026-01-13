@@ -39,8 +39,8 @@ class UR5PyBulletRunner(BaseRunner):
                  fps=10,
                  crf=22,
                  tqdm_interval_sec=5.0,
-                 use_gui=True,
-                 num_points=6000, # TODO : Change this to parse from config (point cloud - shape)
+                 use_gui=False,
+                 num_points=6000,
                  image_size=224,
                  use_workspace_crop=True,
                  workspace_std=2.0,
@@ -55,6 +55,7 @@ class UR5PyBulletRunner(BaseRunner):
         self.crf = crf
         self.tqdm_interval_sec = tqdm_interval_sec
         self.action_dim = action_dim
+        self.num_points = num_points
 
         # Environment factory function
         def env_fn():
@@ -67,6 +68,7 @@ class UR5PyBulletRunner(BaseRunner):
                         use_workspace_crop=use_workspace_crop,
                         workspace_std=workspace_std,
                         action_dim=self.action_dim,
+                        capture_table=False,  # Don't capture table in point clouds
                     )
                 ),
                 n_obs_steps=n_obs_steps,
@@ -103,6 +105,8 @@ class UR5PyBulletRunner(BaseRunner):
         for episode_id in range(self.episode_test):
             # Get cube start position from validation dataset if available
             cube_start_pos = None
+            cube_start_orn = None
+            
             if dataset is not None:
                 try:
                     # Get the episode index from validation set
@@ -120,8 +124,8 @@ class UR5PyBulletRunner(BaseRunner):
                     else:
                         cprint(f"Episode {episode_id}: No more validation episodes, using random position", "yellow")
                         cube_start_pos = None
-                    
                         cube_start_orn = None
+                        
                 except Exception as e:
                     cprint(f"Episode {episode_id}: Could not load cube position from dataset: {e}", "red")
                     cprint("Falling back to random cube position", "yellow")
@@ -137,9 +141,12 @@ class UR5PyBulletRunner(BaseRunner):
             else:
                 obs = self.env_test.reset()
             
-            # Debug: print environment keys on first episode
+            # Debug: print shapes on first episode
             if episode_id == 0:
                 cprint(f"Environment provides keys: {list(obs.keys())}", "yellow")
+                for key, val in obs.items():
+                    if isinstance(val, np.ndarray):
+                        cprint(f"  {key}: shape={val.shape}, dtype={val.dtype}", "yellow")
             
             policy.reset()
 
@@ -147,27 +154,60 @@ class UR5PyBulletRunner(BaseRunner):
             done = False
 
             for step_id in range(self.max_steps):
-                np_obs_dict = dict(obs)
+                # Deep copy the observation to avoid reference issues
+                np_obs_dict = {}
+                for key, val in obs.items():
+                    if isinstance(val, np.ndarray):
+                        np_obs_dict[key] = val.copy()
+                    else:
+                        np_obs_dict[key] = val
 
+                # Debug point cloud shape before processing
+                if step_id == 0 and episode_id == 0:
+                    pc_raw = np_obs_dict['point_cloud']
+                    cprint(f"Raw point cloud shape: {pc_raw.shape}", "cyan")
+                    
+                    # The MultiStepWrapper stacks observations, so we need to handle this
+                    # Expected: (n_obs_steps, num_points, 3) or (num_points, 3)
+                    if pc_raw.ndim == 3:
+                        # Stacked observations: (n_obs_steps, num_points, 3)
+                        cprint(f"Detected stacked observations: {pc_raw.shape}", "cyan")
+                        # Take the last observation for debugging
+                        pc_for_debug = pc_raw[-1]
+                    elif pc_raw.ndim == 2:
+                        # Single observation: (num_points, 3)
+                        pc_for_debug = pc_raw
+                    else:
+                        cprint(f"WARNING: Unexpected point cloud shape: {pc_raw.shape}", "red")
+                        pc_for_debug = pc_raw.reshape(-1, 3)
+                    
+                    save_pointcloud(pc_for_debug, "env_pc.ply")
+                    cprint(f"Saved debug point cloud with shape: {pc_for_debug.shape}", "cyan")
+
+                # Convert to torch tensors
                 obs_dict = dict_apply(
                     np_obs_dict,
                     lambda x: torch.from_numpy(x).to(device=device, non_blocking=True)
                 )
 
-                # Debug: save point cloud on first step
-                if step_id == 0 and episode_id == 0:
-                    pc = obs["point_cloud"]
-                    if pc.ndim == 3:
-                        pc = pc[-1]
-                    save_pointcloud(pc, "env_pc.ply")
-                
+                # Build policy observation dict
                 policy_obs = {}
-
                 for key in policy.normalizer.params_dict.keys():
                     if key == "action":
-                        continue  
-                    policy_obs[key] = obs_dict[key].unsqueeze(0)
-            
+                        continue
+                    
+                    if key in obs_dict:
+                        # Add batch dimension: (B, ...)
+                        policy_obs[key] = obs_dict[key].unsqueeze(0)
+                    else:
+                        cprint(f"WARNING: Policy expects key '{key}' but not in observation!", "red")
+                
+                # Debug shapes before policy prediction
+                if step_id == 0 and episode_id == 0:
+                    cprint("Policy input shapes:", "cyan")
+                    for key, val in policy_obs.items():
+                        cprint(f"  {key}: {val.shape}", "cyan")
+
                 with torch.no_grad():
                     action_dict = policy.predict_action(policy_obs)
 
@@ -177,12 +217,20 @@ class UR5PyBulletRunner(BaseRunner):
                     lambda x: x.detach().cpu().numpy()
                 )['action']
                 
+                # Debug action shape
+                if step_id == 0 and episode_id == 0:
+                    cprint(f"Raw action shape: {action.shape}", "cyan")
+                
                 # MultiStepWrapper may return (1, n_action_steps, action_dim)
                 # or (n_action_steps, action_dim), we need to flatten properly
                 if action.ndim == 3:
                     action = action.squeeze(0)  # Remove batch dim: (n_action_steps, action_dim)
                 elif action.ndim == 2 and action.shape[0] == 1:
                     action = action.squeeze(0)  # Remove batch dim if present
+                
+                # Final check
+                if step_id == 0 and episode_id == 0:
+                    cprint(f"Final action shape for env.step(): {action.shape}", "cyan")
 
                 obs, reward, done, info = self.env_test.step(action)
                 reward_sum += reward
