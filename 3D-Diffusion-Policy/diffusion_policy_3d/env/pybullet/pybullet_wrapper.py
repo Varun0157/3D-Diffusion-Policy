@@ -288,7 +288,9 @@ class UR5PickPlaceEnv(gym.Env):
         p.setAdditionalSearchPath(pybullet_data.getDataPath())
         
         # Load environment
-        self.plane_id = p.loadURDF("plane.urdf")
+        if capture_table:
+            self.plane_id = p.loadURDF("plane.urdf")
+        
         self.table_id = p.loadURDF("table/table.urdf", [0.5, 0, 0], p.getQuaternionFromEuler([0, 0, 0]))
         self.tray_pos = [0.5, 0.9, 0.6]
         self.tray_orn = p.getQuaternionFromEuler([0, 0, 0])
