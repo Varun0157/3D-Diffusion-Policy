@@ -23,7 +23,7 @@ class DroidDataset(BaseDataset):
         super().__init__()
         self.task_name = task_name
         self.replay_buffer = ReplayBuffer.copy_from_path(
-            zarr_path, keys=['state', 'action', 'point_cloud', 'img'])
+            zarr_path, keys=['state', 'action', 'point_cloud', 'img', 'cube_pos'])
         val_mask = get_val_mask(
             n_episodes=self.replay_buffer.n_episodes,
             val_ratio=val_ratio,
@@ -74,13 +74,15 @@ class DroidDataset(BaseDataset):
     def _sample_to_data(self, sample):
         agent_pos = sample['state'][:,].astype(np.float32) # (T, 13)
         point_cloud = sample['point_cloud'][:,].astype(np.float32) # (T, 2500, 6)
+        cube_pos = sample['cube_pos'][:,].astype(np.float32) # (T, 7) - [x,y,z,qx,qy,qz,qw]
 
         data = {
             'obs': {
                 'point_cloud': point_cloud, # T, 2500, 6
                 'agent_pos': agent_pos, # T, 13
             },
-            'action': sample['action'].astype(np.float32) # T, 13
+            'action': sample['action'].astype(np.float32), # T, 13
+            'cube_pos': cube_pos, # T, 7 - cube position and orientation
         }
         return data
 
@@ -89,3 +91,14 @@ class DroidDataset(BaseDataset):
         data = self._sample_to_data(sample)
         torch_data = dict_apply(data, torch.from_numpy)
         return torch_data
+    
+    def get_episode_cube_start_pos(self, episode_idx: int):
+        """Get the initial cube position for a specific episode"""
+        # Get the start index of the episode
+        episode_start_idx = self.replay_buffer.episode_ends[episode_idx] if episode_idx > 0 else 0
+        if episode_idx > 0:
+            episode_start_idx = self.replay_buffer.episode_ends[episode_idx - 1]
+        
+        # Get the first cube position in the episode (initial position)
+        cube_pos = self.replay_buffer['cube_pos'][episode_start_idx].astype(np.float32)
+        return cube_pos  # Returns [x, y, z, qx, qy, qz, qw]
