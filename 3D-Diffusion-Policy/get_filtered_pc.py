@@ -3,20 +3,29 @@ import open3d as o3d
 import torch
 import pytorch3d.ops as torch3d_ops
 
-fx_old = 325.40277099609375
-fy_old = 325.40277099609375
-cx_old = 318.8664245605469
-cy_old = 181.1650390625
+fx_old = 386.015380859375
+fy_old = 385.0470886230469
+cx_old = 329.5455322265625
+cy_old = 244.97164916992188
 
-# fx = 325.40277099609375/4
-# fy = 325.40277099609375/4
-# cx = 318.8664245605469/4
-# cy = 181.1650390625/4
+# fx = 386.015380859375/4
+# fy = 385.0470886230469/4
+# cx = 329.5455322265625/4
+# cy = 244.97164916992188/4
 
 fx = fx_old
 fy = fy_old
 cx = cx_old
 cy = cy_old
+
+# Camera extrinsics (Base -> Camera)
+BASE_TO_EXT_CAM = np.array([
+    [ 0.9997, -0.0232,  0.0054,  0.425 ],
+    [-0.0048,  0.0249,  0.9997, -0.7518],
+    [-0.0234, -0.9994,  0.0248,  0.3408],
+    [ 0.0000,  0.0000,  0.0000,  1.0000]
+], dtype=np.float32)
+
 
 # Defaults matching src/extract-rgb-pc.py
 DEFAULT_INTRINSICS = {
@@ -27,11 +36,18 @@ DEFAULT_INTRINSICS = {
 }
 
 # Workspace boundaries from src/point-cloud-filtering.py
+# WORK_SPACE = [
+#     [-0.855, 0.855],  # X (radius)
+#     [-0.855, 0.855],  # Y (radius)
+#     [-0.360, 1.190]   # Z (height)
+# ]
+
 WORK_SPACE = [
-    [-0.855, 0.855],  # X (radius)
-    [-0.855, 0.855],  # Y (radius)
-    [-0.360, 1.190]   # Z (height)
+    [-0.05, 0.4],  # X (radius)
+    [-0.12, 0.35],  # Y (radius)
+    [0, 0.6]   # Z (height)
 ]
+
 
 def farthest_point_sampling(points, num_points=2500, use_cuda=True):
     """
@@ -70,6 +86,16 @@ def depth_to_pointcloud(depth_img, intrinsics):
     points = np.stack((X, Y, Z), axis=-1).reshape(-1, 3)
     return points
 
+def transform_pointcloud(points, transform_matrix):
+    """Transform point cloud using 4x4 homogeneous transformation matrix."""
+    # Add homogeneous coordinate
+    points_homo = np.column_stack([points, np.ones(len(points))])
+    # Apply transformation
+    points_transformed = (transform_matrix @ points_homo.T).T
+    # Return 3D points
+    return points_transformed[:, :3]
+
+
 def rgbd_to_sampled_pc(rgb_img, depth_img, num_points=2500, intrinsics=None, device='cuda:0'):
     """
     Takes RGB and Depth images and returns a sampled point cloud.
@@ -91,6 +117,8 @@ def rgbd_to_sampled_pc(rgb_img, depth_img, num_points=2500, intrinsics=None, dev
     # 1. Convert to Point Cloud (XYZ)
     points = depth_to_pointcloud(depth_img, intrinsics)
     
+    points = transform_pointcloud(points, BASE_TO_EXT_CAM)
+
     # 2. Prepare Colors (flatten and normalize if needed)
     if rgb_img.dtype == np.uint8:
         colors = rgb_img.reshape(-1, 3).astype(np.float32) / 255.0
