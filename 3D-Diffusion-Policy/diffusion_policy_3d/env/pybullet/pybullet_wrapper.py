@@ -349,11 +349,11 @@ class UR5PickPlaceEnv(gym.Env):
         if visible:
             # Make table and plane visible
             p.changeVisualShape(self.table_id, -1, rgbaColor=[1, 1, 1, 1])
-            p.changeVisualShape(self.plane_id, -1, rgbaColor=[1, 1, 1, 1])
+            # p.changeVisualShape(self.plane_id, -1, rgbaColor=[1, 1, 1, 1])
         else:
             # Make table and plane transparent (invisible in camera)
             p.changeVisualShape(self.table_id, -1, rgbaColor=[1, 1, 1, 0])
-            p.changeVisualShape(self.plane_id, -1, rgbaColor=[1, 1, 1, 0])
+            # p.changeVisualShape(self.plane_id, -1, rgbaColor=[1, 1, 1, 0])
     
     def reset(self, cube_start_pos=None, cube_start_orn=None):
         """
