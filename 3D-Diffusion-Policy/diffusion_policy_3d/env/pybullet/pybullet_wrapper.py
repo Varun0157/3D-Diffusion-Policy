@@ -261,7 +261,7 @@ class UR5PickPlaceEnv(gym.Env):
     
     metadata = {"render.modes": ["rgb_array"], "video.frames_per_second": 10}
     
-    def __init__(self, use_gui=True, num_points=6000, image_size=224,
+    def __init__(self, use_gui=False, num_points=6000, image_size=224,
                  use_workspace_crop=True, workspace_std=2.0, action_dim=7,
                  capture_table=False):
         
@@ -353,8 +353,14 @@ class UR5PickPlaceEnv(gym.Env):
             p.changeVisualShape(self.table_id, -1, rgbaColor=[1, 1, 1, 0])
             p.changeVisualShape(self.plane_id, -1, rgbaColor=[1, 1, 1, 0])
     
-    def reset(self , cube_start_pos, cube_start_orn):
-        """Reset the environment"""
+    def reset(self, cube_start_pos=None, cube_start_orn=None):
+        """
+        Reset the environment
+        
+        Args:
+            cube_start_pos: Optional 3D position [x, y, z] for cube. If None, random position is used.
+            cube_start_orn: Optional quaternion [x, y, z, w] for cube orientation. If None, [0, 0, 0, 1] is used.
+        """
         self.current_step = 0
         self.is_success_flag = False
         self.workspace_bounds = None
@@ -373,14 +379,31 @@ class UR5PickPlaceEnv(gym.Env):
         for _ in range(100):
             p.stepSimulation()
         
-
+        # Use provided cube position or generate random one
         if cube_start_pos is not None:
             self.cube_start_pos = cube_start_pos
+        else:
+            print("Randomizing cube start position.")
+            self.cube_start_pos = [
+                random.uniform(0.3, 0.7),
+                random.uniform(-0.1, 0.1),
+                0.65
+            ]
+        
+        # Use provided orientation or default to identity quaternion
         if cube_start_orn is not None:
-            self.cube_start_orn = cube_start_orn
-
-
-        self.cube_id = p.loadURDF("cube_small.urdf", self.cube_start_pos, self.cube_start_orn)
+            # Convert from [x, y, z, w] to PyBullet quaternion if needed
+            if len(cube_start_orn) == 4:
+                # Already a quaternion
+                cube_orn_quat = cube_start_orn
+            else:
+                # Assume Euler angles
+                cube_orn_quat = p.getQuaternionFromEuler(cube_start_orn)
+        else:
+            print("Using default cube(random) orientation.")
+            cube_orn_quat = p.getQuaternionFromEuler([0, 0, 0])
+        
+        self.cube_id = p.loadURDF("cube_small.urdf", self.cube_start_pos, cube_orn_quat)
         
         # Random cube color
         color = [random.random(), random.random(), random.random(), 1.0]
