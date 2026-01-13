@@ -24,12 +24,14 @@ def compute_workspace_bounds(pc_xyz, n_std=2):
     mean = pc_xyz.mean(axis=0)
     std = pc_xyz.std(axis=0)
     
-    WORK_SPACE = [
-        [mean[0] - n_std * std[0], mean[0] + n_std * std[0]],  # X
-        [mean[1] - n_std * std[1], mean[1] + n_std * std[1]],  # Y
-        [mean[2] - n_std * std[2], mean[2] + n_std * std[2]]   # Z
-    ]
-    
+    # WORK_SPACE = [
+        # [mean[0] - n_std * std[0], mean[0] + n_std * std[0]],  # X
+        # [mean[1] - n_std * std[1], mean[1] + n_std * std[1]],  # Y
+        # [mean[2] - n_std * std[2], mean[2] + n_std * std[2]]   # Z
+    # ]
+    # 
+    WORK_SPACE = [[0.6389609647247474, 4.405105314033407], [-4.562868614993293, -1.0280730580106126], [1.2382057599132916, 2.6079001348631374]]
+
     return WORK_SPACE
 
 def crop_workspace(pc_xyz, workspace_bounds):
