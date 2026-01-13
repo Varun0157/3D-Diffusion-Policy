@@ -353,7 +353,7 @@ class UR5PickPlaceEnv(gym.Env):
             p.changeVisualShape(self.table_id, -1, rgbaColor=[1, 1, 1, 0])
             p.changeVisualShape(self.plane_id, -1, rgbaColor=[1, 1, 1, 0])
     
-    def reset(self):
+    def reset(self , cube_start_pos, cube_start_orn):
         """Reset the environment"""
         self.current_step = 0
         self.is_success_flag = False
@@ -373,14 +373,14 @@ class UR5PickPlaceEnv(gym.Env):
         for _ in range(100):
             p.stepSimulation()
         
-        # Spawn cube at random location
-        self.cube_start_pos = [
-            random.uniform(0.3, 0.7),
-            random.uniform(-0.1, 0.1),
-            0.65
-        ]
-        cube_start_orn = p.getQuaternionFromEuler([0, 0, 0])
-        self.cube_id = p.loadURDF("cube_small.urdf", self.cube_start_pos, cube_start_orn)
+
+        if cube_start_pos is not None:
+            self.cube_start_pos = cube_start_pos
+        if cube_start_orn is not None:
+            self.cube_start_orn = cube_start_orn
+
+
+        self.cube_id = p.loadURDF("cube_small.urdf", self.cube_start_pos, self.cube_start_orn)
         
         # Random cube color
         color = [random.random(), random.random(), random.random(), 1.0]
