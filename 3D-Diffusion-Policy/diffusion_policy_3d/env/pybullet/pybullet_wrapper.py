@@ -548,8 +548,8 @@ class UR5PickPlaceEnv(gym.Env):
                 if self.current_step == 0:
                     print(f"  After workspace crop: {point_cloud.shape[0]} points")
         
-        print(f"Point cloud before downsampling: {point_cloud.shape[0]} points")
-        print(f"Number of points required: {self.num_points}")
+        # print(f"Point cloud before downsampling: {point_cloud.shape[0]} points")
+        # print(f"Number of points required: {self.num_points}")
         
         if point_cloud.shape[0] == 0:
             point_cloud = np.zeros((self.num_points, 3), dtype=np.float32)
