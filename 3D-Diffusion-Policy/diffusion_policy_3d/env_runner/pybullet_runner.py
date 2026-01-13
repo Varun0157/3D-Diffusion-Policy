@@ -35,7 +35,7 @@ def save_pointcloud(pc, fname="debug_pc.ply"):
 
 class UR5PyBulletRunner(BaseRunner):
     """
-    Extended runner that plots predicted vs ground truth joint angle deltas
+    Extended runner that uses validation dataset cube positions for evaluation
     """
 
     def __init__(
@@ -92,11 +92,11 @@ class UR5PyBulletRunner(BaseRunner):
 
     def run(self, policy: BasePolicy, dataset=None):
         """
-        Run evaluation
+        Run evaluation using validation dataset cube positions
 
         Args:
             policy: Policy to evaluate
-            dataset: Optional dataset for key mapping reference
+            dataset: Validation dataset to get cube positions from
         """
         device = policy.device
 
@@ -108,7 +108,7 @@ class UR5PyBulletRunner(BaseRunner):
         all_success_rates_test = []
 
         cprint("=" * 50, "cyan")
-        cprint("Running on TEST environment", "cyan")
+        cprint("Running on TEST environment with VALIDATION dataset cube positions", "cyan")
         cprint("=" * 50, "cyan")
 
         for episode_id in range(self.episode_test):
@@ -131,10 +131,13 @@ class UR5PyBulletRunner(BaseRunner):
                     lambda x: torch.from_numpy(x).to(device=device, non_blocking=True),
                 )
 
-                pc = obs["point_cloud"]
-                if pc.ndim == 3:
-                    pc = pc[-1]
-                save_pointcloud(pc, "env_pc.ply")
+                # Debug: save point cloud on first step
+                if step_id == 0 and episode_id == 0:
+                    pc = obs["point_cloud"]
+                    if pc.ndim == 3:
+                        pc = pc[-1]
+                    save_pointcloud(pc, "env_pc.ply")
+                
                 policy_obs = {}
 
                 for key in policy.normalizer.params_dict.keys():
