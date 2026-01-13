@@ -1,16 +1,13 @@
-import wandb
+\import wandb
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
 import matplotlib
-
-matplotlib.use("Agg")  # For headless plotting
+matplotlib.use('Agg')  # For headless plotting
 from termcolor import cprint
 from diffusion_policy_3d.env import UR5PickPlaceEnv
 from diffusion_policy_3d.gym_util.multistep_wrapper import MultiStepWrapper
-from diffusion_policy_3d.gym_util.video_recording_wrapper import (
-    SimpleVideoRecordingWrapper,
-)
+from diffusion_policy_3d.gym_util.video_recording_wrapper import SimpleVideoRecordingWrapper
 
 from diffusion_policy_3d.policy.base_policy import BasePolicy
 from diffusion_policy_3d.common.pytorch_util import dict_apply
@@ -19,11 +16,6 @@ import diffusion_policy_3d.common.logger_util as logger_util
 
 import open3d as o3d
 import numpy as np
-
-
-import open3d as o3d
-import numpy as np
-import os
 
 
 def save_pointcloud(pc, fname="debug_pc.ply"):
@@ -35,28 +27,25 @@ def save_pointcloud(pc, fname="debug_pc.ply"):
 
 class UR5PyBulletRunner(BaseRunner):
     """
-    Extended runner that plots predicted vs ground truth joint angle deltas
+    Extended runner that uses validation dataset cube positions for evaluation
     """
-
-    def __init__(
-        self,
-        output_dir,
-        n_train=10,
-        n_test=10,
-        max_steps=350,
-        n_obs_steps=2,
-        n_action_steps=8,
-        fps=10,
-        crf=22,
-        tqdm_interval_sec=5.0,
-        use_gui=False,
-        num_points=1024,
-        image_size=224,
-        use_workspace_crop=True,
-        workspace_std=2.0,
-        action_dim=7,
-    ):
-
+    def __init__(self,
+                 output_dir,
+                 n_train=10,
+                 n_test=10,
+                 max_steps=350,
+                 n_obs_steps=2,
+                 n_action_steps=8,
+                 fps=10,
+                 crf=22,
+                 tqdm_interval_sec=5.0,
+                 use_gui=True,
+                 num_points=6000, # TODO : Change this to parse from config (point cloud - shape)
+                 image_size=224,
+                 use_workspace_crop=True,
+                 workspace_std=2.0,
+                 action_dim=7,
+                 ):
         super().__init__(output_dir)
 
         self.max_steps = max_steps
@@ -83,20 +72,20 @@ class UR5PyBulletRunner(BaseRunner):
                 n_obs_steps=n_obs_steps,
                 n_action_steps=n_action_steps,
                 max_episode_steps=max_steps,
-                reward_agg_method="sum",
+                reward_agg_method='sum',
             )
-
+        
         self.env_test = env_fn()
         self.episode_test = n_test
         self.logger_util_test = logger_util.LargestKRecorder(K=3)
 
     def run(self, policy: BasePolicy, dataset=None):
         """
-        Run evaluation
+        Run evaluation using validation dataset cube positions
 
         Args:
             policy: Policy to evaluate
-            dataset: Optional dataset for key mapping reference
+            dataset: Validation dataset to get cube positions from
         """
         device = policy.device
 
@@ -108,16 +97,50 @@ class UR5PyBulletRunner(BaseRunner):
         all_success_rates_test = []
 
         cprint("=" * 50, "cyan")
-        cprint("Running on TEST environment", "cyan")
+        cprint("Running on TEST environment with VALIDATION dataset cube positions", "cyan")
         cprint("=" * 50, "cyan")
 
         for episode_id in range(self.episode_test):
-            obs = self.env_test.reset()
-
+            # Get cube start position from validation dataset if available
+            cube_start_pos = None
+            if dataset is not None:
+                try:
+                    # Get the episode index from validation set
+                    val_episode_indices = np.where(~dataset.train_mask)[0]
+                    
+                    if episode_id < len(val_episode_indices):
+                        val_ep_idx = val_episode_indices[episode_id]
+                        cube_pos_full = dataset.get_episode_cube_start_pos(val_ep_idx)
+                    
+                        # Extract position (first 3 elements) and orientation (last 4 elements)
+                        cube_start_pos = cube_pos_full[:3].tolist()
+                        cube_start_orn = cube_pos_full[3:7].tolist()
+                        cprint(f"Episode {episode_id}: Using cube position from val dataset: {cube_start_pos}", "green")
+                    
+                    else:
+                        cprint(f"Episode {episode_id}: No more validation episodes, using random position", "yellow")
+                        cube_start_pos = None
+                    
+                        cube_start_orn = None
+                except Exception as e:
+                    cprint(f"Episode {episode_id}: Could not load cube position from dataset: {e}", "red")
+                    cprint("Falling back to random cube position", "yellow")
+                    cube_start_pos = None
+                    cube_start_orn = None
+            
+            # Reset environment with specified or random cube position
+            if cube_start_pos is not None:
+                obs = self.env_test.env.env.reset(cube_start_pos=cube_start_pos, cube_start_orn=cube_start_orn)
+                # Need to reset the wrappers' state too
+                self.env_test.env.step_count = 0
+                self.env_test.step_count = 0
+            else:
+                obs = self.env_test.reset()
+            
             # Debug: print environment keys on first episode
             if episode_id == 0:
                 cprint(f"Environment provides keys: {list(obs.keys())}", "yellow")
-
+            
             policy.reset()
 
             reward_sum = 0.0
@@ -128,34 +151,36 @@ class UR5PyBulletRunner(BaseRunner):
 
                 obs_dict = dict_apply(
                     np_obs_dict,
-                    lambda x: torch.from_numpy(x).to(device=device, non_blocking=True),
+                    lambda x: torch.from_numpy(x).to(device=device, non_blocking=True)
                 )
 
-                pc = obs["point_cloud"]
-                if pc.ndim == 3:
-                    pc = pc[-1]
-                save_pointcloud(pc, "env_pc.ply")
+                # Debug: save point cloud on first step
+                if step_id == 0 and episode_id == 0:
+                    pc = obs["point_cloud"]
+                    if pc.ndim == 3:
+                        pc = pc[-1]
+                    save_pointcloud(pc, "env_pc.ply")
+                
                 policy_obs = {}
 
                 for key in policy.normalizer.params_dict.keys():
                     if key == "action":
-                        continue
+                        continue  
                     policy_obs[key] = obs_dict[key].unsqueeze(0)
-
+            
                 with torch.no_grad():
                     action_dict = policy.predict_action(policy_obs)
 
                 # Extract action - handle both single and multi-step actions
-                action = dict_apply(action_dict, lambda x: x.detach().cpu().numpy())[
-                    "action"
-                ]
-
+                action = dict_apply(
+                    action_dict,
+                    lambda x: x.detach().cpu().numpy()
+                )['action']
+                
                 # MultiStepWrapper may return (1, n_action_steps, action_dim)
                 # or (n_action_steps, action_dim), we need to flatten properly
                 if action.ndim == 3:
-                    action = action.squeeze(
-                        0
-                    )  # Remove batch dim: (n_action_steps, action_dim)
+                    action = action.squeeze(0)  # Remove batch dim: (n_action_steps, action_dim)
                 elif action.ndim == 2 and action.shape[0] == 1:
                     action = action.squeeze(0)  # Remove batch dim if present
 
@@ -173,7 +198,7 @@ class UR5PyBulletRunner(BaseRunner):
                 f"Test Episode {episode_id}: "
                 f"Reward={reward_sum:.2f}, "
                 f"Success={self.env_test.env.is_success()}",
-                "yellow",
+                "yellow"
             )
 
         # ---- Metrics ----
@@ -183,17 +208,17 @@ class UR5PyBulletRunner(BaseRunner):
         self.logger_util_test.record(SR_mean_test)
 
         log_data = {
-            "mean_success_rates_test": SR_mean_test,
-            "mean_returns_test": returns_mean_test,
-            "SR_test_L3": self.logger_util_test.average_of_largest_K(),
-            "test_mean_score": SR_mean_test,
+            'mean_success_rates_test': SR_mean_test,
+            'mean_returns_test': returns_mean_test,
+            'SR_test_L3': self.logger_util_test.average_of_largest_K(),
+            'test_mean_score': SR_mean_test
         }
 
         cprint("=" * 50, "green")
         cprint(
             f"Test - Mean SR: {SR_mean_test:.3f}, "
             f"Mean Return: {returns_mean_test:.3f}",
-            "green",
+            "green"
         )
         cprint("=" * 50, "green")
 
@@ -203,7 +228,7 @@ class UR5PyBulletRunner(BaseRunner):
             if len(videos_test.shape) == 5:
                 videos_test = videos_test[:, 0]
 
-            log_data["sim_video_test"] = wandb.Video(
+            log_data['sim_video_test'] = wandb.Video(
                 videos_test, fps=self.fps, format="mp4"
             )
             cprint("✓ Test video captured", "cyan")
@@ -217,4 +242,3 @@ class UR5PyBulletRunner(BaseRunner):
             pass
 
         return log_data
-

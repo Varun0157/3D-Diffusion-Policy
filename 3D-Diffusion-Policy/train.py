@@ -253,6 +253,14 @@ class TrainDP3Workspace:
             if cfg.training.use_ema:
                 policy = self.ema_model
             policy.eval()
+            
+            """
+            1. We run rollout on random envs every N epochs (not training data nor validation data) 
+            -> just randomly places the cube in the env and runs the policy
+
+            2. We run validation on the validation dataset every N epochs
+            -> this is similar to training, but on the validation set
+            """
 
             # run rollout
             if (
@@ -376,10 +384,12 @@ class TrainDP3Workspace:
             # self.load_checkpoint(path=lastest_ckpt_path)
         #  
         # lastest_ckpt_path = "/scratch2/cross-emb/DP3_outputs/pybullet_pick_place-dp3-no_eef_seed0/checkpoints"
-        lastest_ckpt_path = "/home/aniruth/Desktop/RRC/3D-Diffusion-Policy/checkpoints/latest.ckpt"
+        # lastest_ckpt_path = "/home/aniruth/Desktop/RRC/3D-Diffusion-Policy/checkpoints/latest.ckpt"
+        lastest_ckpt_path = "/home/aniruth/Desktop/RRC/3D-Diffusion-Policy/checkpoints/6k-ckpts/latest.ckpt"
         print(f"Checkpoint is loaded from : {lastest_ckpt_path}")
         
         self.load_checkpoint(path=lastest_ckpt_path)
+        
         dataset: BaseDataset = hydra.utils.instantiate(cfg.task.dataset)
         normalizer = dataset.get_normalizer()
 
