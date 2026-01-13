@@ -32,7 +32,7 @@ class UR5PyBulletRunner(BaseRunner):
     def __init__(self,
                  output_dir,
                  n_train=10,
-                 n_test=10,
+                 n_test=1,
                  max_steps=350,
                  n_obs_steps=2,
                  n_action_steps=8,
