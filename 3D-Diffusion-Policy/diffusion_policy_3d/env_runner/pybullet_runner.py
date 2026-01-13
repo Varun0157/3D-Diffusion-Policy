@@ -134,10 +134,10 @@ class UR5PyBulletRunner(BaseRunner):
             
             # Reset environment with specified or random cube position
             if cube_start_pos is not None:
-                obs = self.env_test.env.env.reset(cube_start_pos=cube_start_pos, cube_start_orn=cube_start_orn)
-                # Need to reset the wrappers' state too
-                self.env_test.env.step_count = 0
-                self.env_test.step_count = 0
+                # Temporarily store the cube position in the base environment
+                self.env_test.env.env.cube_start_pos = cube_start_pos
+                self.env_test.env.env.cube_start_orn = cube_start_orn
+                obs = self.env_test.reset()
             else:
                 obs = self.env_test.reset()
             
@@ -147,6 +147,7 @@ class UR5PyBulletRunner(BaseRunner):
                 for key, val in obs.items():
                     if isinstance(val, np.ndarray):
                         cprint(f"  {key}: shape={val.shape}, dtype={val.dtype}", "yellow")
+                cprint(f"n_obs_steps: {self.n_obs_steps}", "yellow")
             
             policy.reset()
 
@@ -167,12 +168,10 @@ class UR5PyBulletRunner(BaseRunner):
                     pc_raw = np_obs_dict['point_cloud']
                     cprint(f"Raw point cloud shape: {pc_raw.shape}", "cyan")
                     
-                    # The MultiStepWrapper stacks observations, so we need to handle this
-                    # Expected: (n_obs_steps, num_points, 3) or (num_points, 3)
+                    # Handle different observation shapes
                     if pc_raw.ndim == 3:
                         # Stacked observations: (n_obs_steps, num_points, 3)
                         cprint(f"Detected stacked observations: {pc_raw.shape}", "cyan")
-                        # Take the last observation for debugging
                         pc_for_debug = pc_raw[-1]
                     elif pc_raw.ndim == 2:
                         # Single observation: (num_points, 3)
@@ -190,7 +189,7 @@ class UR5PyBulletRunner(BaseRunner):
                     lambda x: torch.from_numpy(x).to(device=device, non_blocking=True)
                 )
 
-                # Build policy observation dict
+                # Build policy observation dict with proper handling of observation history
                 policy_obs = {}
                 for key in policy.normalizer.params_dict.keys():
                     if key == "action":
@@ -199,24 +198,37 @@ class UR5PyBulletRunner(BaseRunner):
                     if key in obs_dict:
                         tensor = obs_dict[key]
                         
-                        # Handle point_cloud specially - it may already be stacked
+                        # Handle stacked vs single observations
+                        # MultiStepWrapper should give us (n_obs_steps, ...) but might not always
+                        
                         if key == "point_cloud":
-                            if tensor.ndim == 3:
-                                # Already stacked: (n_obs_steps, num_points, 3)
-                                # Add batch dimension: (1, n_obs_steps, num_points, 3)
-                                policy_obs[key] = tensor.unsqueeze(0)
-                            elif tensor.ndim == 2:
-                                # Single frame: (num_points, 3)
-                                # Add batch and time dims: (1, 1, num_points, 3)
-                                policy_obs[key] = tensor.unsqueeze(0).unsqueeze(0)
-                        else:
-                            # For other keys (agent_pos, image), just add batch dimension
+                            if tensor.ndim == 2:
+                                # Single frame: (num_points, 3) - shouldn't happen with wrapper
+                                # Repeat to create history and add batch dim
+                                cprint(f"WARNING: point_cloud not stacked, repeating {self.n_obs_steps} times", "yellow")
+                                tensor = tensor.unsqueeze(0).repeat(self.n_obs_steps, 1, 1)
+                            # Now tensor should be (n_obs_steps, num_points, 3)
+                            policy_obs[key] = tensor.unsqueeze(0)  # (1, n_obs_steps, num_points, 3)
+                            
+                        elif key == "agent_pos":
                             if tensor.ndim == 1:
-                                # Single frame: (D,) -> (1, D)
-                                policy_obs[key] = tensor.unsqueeze(0)
-                            else:
-                                # Already stacked: (n_obs_steps, ...) -> (1, n_obs_steps, ...)
-                                policy_obs[key] = tensor.unsqueeze(0)
+                                # Single frame: (action_dim,) - shouldn't happen with wrapper
+                                # Repeat to create history and add batch dim
+                                cprint(f"WARNING: agent_pos not stacked, repeating {self.n_obs_steps} times", "yellow")
+                                tensor = tensor.unsqueeze(0).repeat(self.n_obs_steps, 1)
+                            # Now tensor should be (n_obs_steps, action_dim)
+                            policy_obs[key] = tensor.unsqueeze(0)  # (1, n_obs_steps, action_dim)
+                            
+                        elif key == "image":
+                            if tensor.ndim == 3:
+                                # Single frame: (C, H, W) - shouldn't happen with wrapper
+                                cprint(f"WARNING: image not stacked, repeating {self.n_obs_steps} times", "yellow")
+                                tensor = tensor.unsqueeze(0).repeat(self.n_obs_steps, 1, 1, 1)
+                            # Now tensor should be (n_obs_steps, C, H, W)
+                            policy_obs[key] = tensor.unsqueeze(0)  # (1, n_obs_steps, C, H, W)
+                        else:
+                            # Generic handling: add batch dimension
+                            policy_obs[key] = tensor.unsqueeze(0)
                     else:
                         cprint(f"WARNING: Policy expects key '{key}' but not in observation!", "red")
                 
@@ -239,8 +251,7 @@ class UR5PyBulletRunner(BaseRunner):
                 if step_id == 0 and episode_id == 0:
                     cprint(f"Raw action shape: {action.shape}", "cyan")
                 
-                # MultiStepWrapper may return (1, n_action_steps, action_dim)
-                # or (n_action_steps, action_dim), we need to flatten properly
+                # MultiStepWrapper expects (n_action_steps, action_dim)
                 if action.ndim == 3:
                     action = action.squeeze(0)  # Remove batch dim: (n_action_steps, action_dim)
                 elif action.ndim == 2 and action.shape[0] == 1:
