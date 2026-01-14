@@ -9,7 +9,7 @@ from termcolor import cprint
 from gym import spaces
 import random
 
-def compute_workspace_bounds(pc_xyz, n_std=2):
+def compute_workspace_bounds(pc_xyz, n_std=4):
     """
     Compute workspace bounds using mean ± n_std * std
     Args:
@@ -24,13 +24,12 @@ def compute_workspace_bounds(pc_xyz, n_std=2):
     mean = pc_xyz.mean(axis=0)
     std = pc_xyz.std(axis=0)
     
-    # WORK_SPACE = [
-        # [mean[0] - n_std * std[0], mean[0] + n_std * std[0]],  # X
-        # [mean[1] - n_std * std[1], mean[1] + n_std * std[1]],  # Y
-        # [mean[2] - n_std * std[2], mean[2] + n_std * std[2]]   # Z
-    # ]
-    # 
-    WORK_SPACE = [[0.6389609647247474, 4.405105314033407], [-4.562868614993293, -1.0280730580106126], [1.2382057599132916, 2.6079001348631374]]
+    WORK_SPACE = [
+        [mean[0] - n_std * std[0], mean[0] + n_std * std[0]],  # X
+        [mean[1] - n_std * std[1], mean[1] + n_std * std[1]],  # Y
+        [mean[2] - n_std * std[2], mean[2] + n_std * std[2]]   # Z
+    ]
+    
 
     return WORK_SPACE
 
@@ -264,7 +263,7 @@ class UR5PickPlaceEnv(gym.Env):
     metadata = {"render.modes": ["rgb_array"], "video.frames_per_second": 10}
     
     def __init__(self, use_gui=False, num_points=6000, image_size=224,
-                 use_workspace_crop=True, workspace_std=2.0, action_dim=7,
+                 use_workspace_crop=True, workspace_std=4.0, action_dim=7,
                  capture_table=False):
         
         self.use_gui = use_gui

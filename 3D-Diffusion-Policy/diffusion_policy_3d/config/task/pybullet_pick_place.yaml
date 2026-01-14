@@ -24,8 +24,8 @@ env_runner:
   # task_name: pick_place we don't need this for pybullet env
 
 dataset:
-  _target_: diffusion_policy_3d.dataset.droid_dataset.DroidDataset # same format as droid dataset
-  zarr_path: data/final_no_eef.zarr
+  _target_: diffusion_policy_3d.dataset.droid_dataset.DroidDataset # same format as droid dataset 
+  zarr_path: data/final_6k.zarr
   horizon: ${horizon}
   pad_before: ${eval:'${n_obs_steps}-1'}
   pad_after: ${eval:'${n_action_steps}-1'}

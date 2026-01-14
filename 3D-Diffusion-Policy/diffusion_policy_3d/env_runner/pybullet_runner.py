@@ -36,25 +36,23 @@ class UR5PyBulletRunner(BaseRunner):
     """
     Extended runner that uses validation dataset cube positions for evaluation
     """
-
-    def __init__(
-        self,
-        output_dir,
-        n_train=10,
-        n_test=10,
-        max_steps=350,
-        n_obs_steps=2,
-        n_action_steps=8,
-        fps=10,
-        crf=22,
-        tqdm_interval_sec=5.0,
-        use_gui=False,
-        num_points=1024,
-        image_size=224,
-        use_workspace_crop=True,
-        workspace_std=2.0,
-        action_dim=7,
-    ):
+    def __init__(self,
+                 output_dir,
+                 n_train=10,
+                 n_test=1,
+                 max_steps=350,
+                 n_obs_steps=2,
+                 n_action_steps=8,
+                 fps=10,
+                 crf=22,
+                 tqdm_interval_sec=5.0,
+                 use_gui=False,
+                 num_points=6000,
+                 image_size=224,
+                 use_workspace_crop=True,
+                 workspace_std=4.0,
+                 action_dim=7,
+                 ):
         super().__init__(output_dir)
 
         self.max_steps = max_steps
