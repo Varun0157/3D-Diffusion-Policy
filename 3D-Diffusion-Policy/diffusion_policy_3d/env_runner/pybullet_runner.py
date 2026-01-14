@@ -43,7 +43,7 @@ class UR5PyBulletRunner(BaseRunner):
                  num_points=6000,
                  image_size=224,
                  use_workspace_crop=True,
-                 workspace_std=2.0,
+                 workspace_std=4.0,
                  action_dim=7,
                  ):
         super().__init__(output_dir)
