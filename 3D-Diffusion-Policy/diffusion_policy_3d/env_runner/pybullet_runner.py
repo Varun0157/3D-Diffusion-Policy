@@ -1,4 +1,3 @@
-import wandb
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
@@ -19,9 +18,8 @@ import diffusion_policy_3d.common.logger_util as logger_util
 import open3d as o3d
 import numpy as np
 
+import wandb
 
-import open3d as o3d
-import numpy as np
 import os
 
 
