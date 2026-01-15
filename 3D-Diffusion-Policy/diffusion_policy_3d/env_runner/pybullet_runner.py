@@ -171,7 +171,7 @@ class UR5PyBulletRunner(BaseRunner):
                 # Temporarily store the cube position in the base environment
                 self.env_test.env.env.cube_start_pos = cube_start_pos
                 self.env_test.env.env.cube_start_orn = cube_start_orn
-                obs = self.env_test.reset(
+                obs = self.env_test.env.env.reset(
                     cube_start_pos=cube_start_pos, cube_start_orn=cube_start_orn
                 )
             else:
