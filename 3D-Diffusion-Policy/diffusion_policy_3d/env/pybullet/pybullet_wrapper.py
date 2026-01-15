@@ -432,6 +432,8 @@ class UR5PickPlaceEnv(gym.Env):
             cube_start_pos: Optional 3D position [x, y, z] for cube. If None, random position is used.
             cube_start_orn: Optional quaternion [x, y, z, w] for cube orientation. If None, [0, 0, 0, 1] is used.
         """
+        cprint(f"IN ENV RESET parameters {cube_start_pos} and {cube_start_orn}", "cyan")
+
         self.current_step = 0
         self.is_success_flag = False
         self.workspace_bounds = None
