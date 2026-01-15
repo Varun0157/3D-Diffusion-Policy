@@ -35,8 +35,8 @@ def depth_to_pointcloud(depth):
     u, v = np.meshgrid(np.arange(w), np.arange(h))
 
     Z = depth
-    X = (u - cx) * Z / fx
-    Y = (v - cy) * Z / fy
+    X = -(u - cx) * Z / fx
+    Y = -(v - cy) * Z / fy
 
     pts = np.stack((X, Y, Z), axis=-1).reshape(-1, 3)
     return pts

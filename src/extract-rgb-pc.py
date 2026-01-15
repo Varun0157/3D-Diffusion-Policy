@@ -9,7 +9,7 @@ from rosidl_runtime_py.utilities import get_message
 # ------------------------------
 # CONFIG
 # ------------------------------
-DATA_ROOT = "/scratch2/cross-emb/lab_data/Newer Data"        # YOU WILL SET THIS
+DATA_ROOT = "/scratch2/cross-emb/lab_data/Newer Data"  # YOU WILL SET THIS
 OUTPUT_ROOT = "./final-data"
 
 RGB_TOPIC = "/camera/camera/color/image_raw"
@@ -28,7 +28,7 @@ cy = 180.0956268310547
 def convert_depth(msg):
     h, w = msg.height, msg.width
     depth = np.frombuffer(msg.data, dtype=np.uint16).reshape(h, w)
-    return depth.astype(np.float32) / 1000.0   # mm → meters
+    return depth.astype(np.float32) / 1000.0  # mm → meters
 
 
 def convert_rgb(msg):
@@ -41,8 +41,8 @@ def depth_to_pc(depth):
     u, v = np.meshgrid(np.arange(w), np.arange(h))
 
     Z = depth
-    X = (u - cx) * Z / fx
-    Y = (v - cy) * Z / fy
+    X = -(u - cx) * Z / fx
+    Y = -(v - cy) * Z / fy
     return np.stack((X, Y, Z), axis=-1).reshape(-1, 3)
 
 
@@ -88,7 +88,7 @@ def process_bag(folder_name, db3_path):
 
             cv2.imwrite(
                 os.path.join(out_img_dir, f"rgb_{frame_id:05d}.png"),
-                cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+                cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR),
             )
 
         # ------------------ DEPTH + PC ------------------
