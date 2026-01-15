@@ -126,8 +126,8 @@ def depth_to_point_cloud(
     # points_world = (np.linalg.inv(view_matrix_np) @ points_hom.T).T[:, :3]
 
     # # Filter points beyond max_depth
-    # valid_mask = points_world[:, 2] < max_depth
-    # points_world = points_world[valid_mask]
+    valid_mask = points_camera[:, 2] < max_depth
+    points_camera = points_camera[valid_mask]
 
     return points_camera
 
