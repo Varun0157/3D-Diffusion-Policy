@@ -120,16 +120,16 @@ def depth_to_point_cloud(
 
     points_camera = np.stack([x, y, z], axis=-1).reshape(-1, 3)
 
-    # Transform to world frame
-    points_hom = np.hstack([points_camera, np.ones((points_camera.shape[0], 1))])
-    view_matrix_np = np.array(view_matrix).reshape(4, 4).T
-    points_world = (np.linalg.inv(view_matrix_np) @ points_hom.T).T[:, :3]
+    # # Transform to world frame
+    # points_hom = np.hstack([points_camera, np.ones((points_camera.shape[0], 1))])
+    # view_matrix_np = np.array(view_matrix).reshape(4, 4).T
+    # points_world = (np.linalg.inv(view_matrix_np) @ points_hom.T).T[:, :3]
 
-    # Filter points beyond max_depth
-    valid_mask = points_world[:, 2] < max_depth
-    points_world = points_world[valid_mask]
+    # # Filter points beyond max_depth
+    # valid_mask = points_world[:, 2] < max_depth
+    # points_world = points_world[valid_mask]
 
-    return points_world
+    return points_camera
 
 
 class UR5Robotiq85:
