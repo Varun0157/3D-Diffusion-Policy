@@ -355,7 +355,7 @@ class UR5PickPlaceEnv(gym.Env):
         else:
             self.physics_client = p.connect(p.DIRECT)
 
-        p.setGravity(0, 0, -9.8)
+        # p.setGravity(0, 0, -9.8)
         p.setAdditionalSearchPath(pybullet_data.getDataPath())
 
         # Load environment
