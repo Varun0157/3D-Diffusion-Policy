@@ -10,7 +10,7 @@ from gym import spaces
 import random
 
 
-def compute_workspace_bounds(pc_xyz, n_std=4):
+def compute_workspace_bounds(pc_xyz, n_std=30):
     """
     Compute workspace bounds using mean ± n_std * std
     Args:
@@ -329,7 +329,7 @@ class UR5PickPlaceEnv(gym.Env):
         num_points=6000,
         image_size=224,
         use_workspace_crop=True,
-        workspace_std=4.0,
+        workspace_std=30.0,
         action_dim=7,
         capture_table=False,
     ):
