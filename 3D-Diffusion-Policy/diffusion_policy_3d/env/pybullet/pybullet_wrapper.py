@@ -361,10 +361,10 @@ class UR5PickPlaceEnv(gym.Env):
         # Load environment
         if capture_table:
             self.plane_id = p.loadURDF("plane.urdf")
+            self.table_id = p.loadURDF(
+                "table/table.urdf", [0.5, 0, 0], p.getQuaternionFromEuler([0, 0, 0])
+            )
 
-        self.table_id = p.loadURDF(
-            "table/table.urdf", [0.5, 0, 0], p.getQuaternionFromEuler([0, 0, 0])
-        )
         self.tray_pos = [0.5, 0.9, 0.6]
         self.tray_orn = p.getQuaternionFromEuler([0, 0, 0])
         self.tray_id = p.loadURDF("tray/tray.urdf", self.tray_pos, self.tray_orn)
@@ -408,21 +408,21 @@ class UR5PickPlaceEnv(gym.Env):
 
         self.is_success_flag = False
 
-    def _toggle_table_visibility(self, visible):
-        """
-        Toggle visibility of table and plane for point cloud capture.
-
-        Args:
-            visible: If True, show table/plane. If False, make them transparent.
-        """
-        if visible:
-            # Make table and plane visible
-            p.changeVisualShape(self.table_id, -1, rgbaColor=[1, 1, 1, 1])
-            # p.changeVisualShape(self.plane_id, -1, rgbaColor=[1, 1, 1, 1])
-        else:
-            # Make table and plane transparent (invisible in camera)
-            p.changeVisualShape(self.table_id, -1, rgbaColor=[1, 1, 1, 0])
-            # p.changeVisualShape(self.plane_id, -1, rgbaColor=[1, 1, 1, 0])
+    # def _toggle_table_visibility(self, visible):
+    #     """
+    #     Toggle visibility of table and plane for point cloud capture.
+    #
+    #     Args:
+    #         visible: If True, show table/plane. If False, make them transparent.
+    #     """
+    #     if visible:
+    #         # Make table and plane visible
+    #         p.changeVisualShape(self.table_id, -1, rgbaColor=[1, 1, 1, 1])
+    #         # p.changeVisualShape(self.plane_id, -1, rgbaColor=[1, 1, 1, 1])
+    #     else:
+    #         # Make table and plane transparent (invisible in camera)
+    #         p.changeVisualShape(self.table_id, -1, rgbaColor=[1, 1, 1, 0])
+    #         # p.changeVisualShape(self.plane_id, -1, rgbaColor=[1, 1, 1, 0])
 
     def reset(self, cube_start_pos=None, cube_start_orn=None):
         """
@@ -578,9 +578,9 @@ class UR5PickPlaceEnv(gym.Env):
                 f"Unsupported action_dim: {self.action_dim}. Must be 7 or 13."
             )
 
-        # Hide table/plane if capture_table is False
-        if not self.capture_table:
-            self._toggle_table_visibility(visible=False)
+        # # Hide table/plane if capture_table is False
+        # if not self.capture_table:
+        #     self._toggle_table_visibility(visible=False)
 
         view_matrix = p.computeViewMatrix(
             cameraEyePosition=self.tp_cam_eye,
@@ -598,9 +598,9 @@ class UR5PickPlaceEnv(gym.Env):
             projectionMatrix=proj_matrix,
         )
 
-        # Restore table/plane visibility after capture
-        if not self.capture_table:
-            self._toggle_table_visibility(visible=True)
+        # # Restore table/plane visibility after capture
+        # if not self.capture_table:
+        #     self._toggle_table_visibility(visible=True)
 
         rgb_img = np.array(rgb_img)[:, :, :3]
         depth_buffer = np.array(depth_img)
@@ -691,4 +691,3 @@ class UR5PickPlaceEnv(gym.Env):
         self._seed = seed
         random.seed(seed)
         np.random.seed(seed)
-
