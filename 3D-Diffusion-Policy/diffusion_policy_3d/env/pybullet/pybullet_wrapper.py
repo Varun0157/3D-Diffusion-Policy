@@ -8,7 +8,7 @@ import cv2
 from termcolor import cprint
 from gym import spaces
 import random
-
+import time
 
 def compute_workspace_bounds(pc_xyz, n_std=30):
     """
@@ -147,6 +147,7 @@ class UR5Robotiq85:
     def load(self):
         self.id = p.loadURDF(
             "/home/cross-emb/3D-Diffusion-Policy/3D-Diffusion-Policy/diffusion_policy_3d/env/pybullet/urdf/ur5_robotiq_85.urdf",
+            # "/home/aniruth/Desktop/RRC/3D-Diffusion-Policy/3D-Diffusion-Policy/diffusion_policy_3d/env/pybullet/urdf/ur5_robotiq_85.urdf" , 
             self.base_pos,
             self.base_ori,
             useFixedBase=True,
@@ -282,6 +283,25 @@ class UR5Robotiq85:
         limits_upper = self.arm_upper_limits + [self.gripper_range[1]]
         return np.array(limits_lower), np.array(limits_upper)
 
+
+    def set_arm_joints(self, joint_positions):
+        """Set arm joint positions directly"""
+        for i, joint_id in enumerate(self.arm_controllable_joints):
+            p.setJointMotorControl2(
+                self.id,
+                joint_id,
+                p.POSITION_CONTROL,
+                joint_positions[i],
+                maxVelocity=self.max_velocity,
+            )
+
+    def set_gripper(self, gripper_angle):
+        """Set gripper angle directly"""
+        p.setJointMotorControl2(
+            self.id, self.mimic_parent_id, p.POSITION_CONTROL, targetPosition=gripper_angle
+        )
+
+
     def set_joint_positions(self, joint_positions):
         """
         Set joint positions using high-gain position control
@@ -303,8 +323,16 @@ class UR5Robotiq85:
                 self.mimic_parent_id,
                 p.POSITION_CONTROL,
                 targetPosition=gripper_angle,
-                force=100,
+                force=200,  # ← Make sure this is here too
+                maxVelocity=1.0
             )
+
+    def set_joint_positions(self, joint_positions):
+        """Set all joint positions (6 arm + 1 gripper)"""
+        self.set_arm_joints(joint_positions[:6])
+        if len(joint_positions) > 6:
+            self.set_gripper(joint_positions[6])
+
 
     def get_eef_position(self):
         """Get end-effector 3D position"""
@@ -325,7 +353,7 @@ class UR5PickPlaceEnv(gym.Env):
 
     def __init__(
         self,
-        use_gui=False,
+        use_gui=True,
         num_points=6000,
         image_size=224,
         use_workspace_crop=True,
@@ -442,17 +470,34 @@ class UR5PickPlaceEnv(gym.Env):
         if self.cube_id is not None:
             p.removeBody(self.cube_id)
 
-        # Reset robot to rest pose
-        target_joint_positions = [0, -1.57, 1.57, -1.5, -1.57, 0.0]
+        # # Reset robot to rest pose
+        # target_joint_positions = [0, -1.57, 1.57, -1.5, -1.57, 0.0]
+        # for i, joint_id in enumerate(self.robot.arm_controllable_joints):
+        #     p.setJointMotorControl2(
+        #         self.robot.id, joint_id, p.POSITION_CONTROL, target_joint_positions[i]
+        #     )
+
+        # Move to rest pose
+        rest_pose = [0, -1.57, 1.57, -1.5, -1.57, 0.0]
         for i, joint_id in enumerate(self.robot.arm_controllable_joints):
             p.setJointMotorControl2(
-                self.robot.id, joint_id, p.POSITION_CONTROL, target_joint_positions[i]
+                self.robot.id, joint_id, p.POSITION_CONTROL, rest_pose[i]
             )
-
-        # Step simulation to stabilize
-        for _ in range(100):
+        
+        p.setJointMotorControl2(
+            self.robot.id, 
+            self.robot.mimic_parent_id,
+            p.POSITION_CONTROL,
+            targetPosition=0.0,
+            force=200
+        )
+        
+        # Stabilize
+        print("\nStabilizing robot at rest pose...")
+        for _ in range(1000):
             p.stepSimulation()
-
+        
+        print("\n\nStarting position of robot : ", self.robot.get_joint_positions())
         # Use provided cube position or generate random one
         if cube_start_pos is not None:
             self.cube_start_pos = cube_start_pos
@@ -493,11 +538,6 @@ class UR5PickPlaceEnv(gym.Env):
     def step(self, action):
         """
         Execute action and return observation.
-
-        Action can be:
-        - 7D: [joint_deltas(6), gripper_delta(1)] - DELTA joint angles
-        - 13D: [eef_pos(3), eef_orn(3), joint_deltas(6), gripper_delta(1)]
-               where first 6D are not used, last 7D are DELTA joint angles
         """
         self.current_step += 1
 
@@ -509,37 +549,28 @@ class UR5PickPlaceEnv(gym.Env):
         else:
             raise ValueError(f"Action must be 7D or 13D, got {len(action)}D")
 
-        current_joint_positions = self.robot.get_joint_positions()
-        target_joint_positions = current_joint_positions + joint_deltas
-        joint_limits_lower, joint_limits_upper = self.robot.get_joint_limits()
+        print(joint_deltas)
+        arm_deltas = joint_deltas[:6]
+        gripper_delta = joint_deltas[6]  # Single scalar value
+        
+        # Get current joint positions
+        current_joint_pos = self.robot.get_joint_positions()
+        
+        # Apply deltas to get target positions
+        target_arm = current_joint_pos[:6] + arm_deltas
+        target_gripper = current_joint_pos[6] + gripper_delta
 
-        self.robot.set_joint_positions(target_joint_positions)
-
-        actual_joint_positions = self.robot.get_joint_positions()
-
-        # print("\n=== Joint Prediction Debug ===")
-        #
-        # for i, (q_curr, dq, q_tgt, q_act) in enumerate(
-        #     zip(
-        #         current_joint_positions,
-        #         joint_deltas,
-        #         target_joint_positions,
-        #         actual_joint_positions,
-        #     )
-        # ):
-        #     print(
-        #         f"Joint {i:02d} | "
-        #         f"curr: {q_curr:+.4f} | "
-        #         f"Δpred: {dq:+.4f} | "
-        #         f"target: {q_tgt:+.4f} | "
-        #         f"actual: {q_act:+.4f} | "
-        #         f"err: {(q_act - q_tgt):+.4f}"
-        #     )
-        #
-        # print("==============================\n")
-
+        # Apply the target positions
+        self.robot.set_arm_joints(target_arm)
+        self.robot.set_gripper(target_gripper)
+        
+        # Step simulation for smooth motion
         for _ in range(50):
             p.stepSimulation()
+
+        time.sleep(0.05)
+        
+
 
         obs = self._get_obs()
 
@@ -562,7 +593,7 @@ class UR5PickPlaceEnv(gym.Env):
             done = True
 
         info = {"is_success": self.is_success_flag}
-        return obs, reward, done, info
+        return obs, reward, done, info    
 
     def _get_obs(self):
         """Get current observation"""
