@@ -87,6 +87,7 @@ def depth_to_point_cloud(
     near=0.01,
     far=3.0,
     max_depth=2.5,
+    exclude_mask=None
 ):
     """
     Convert a PyBullet depth buffer to a 3D point cloud in world coordinates,
@@ -127,8 +128,12 @@ def depth_to_point_cloud(
 
     # # Filter points beyond max_depth
     valid_mask = points_camera[:, 2] < max_depth
-    points_camera = points_camera[valid_mask]
+    
+    if exclude_mask is not None: # to exclude table and plane
+        print("Excluding points based on provided mask.")
+        valid_mask = valid_mask & (~exclude_mask)
 
+    points_camera = points_camera[valid_mask]
     return points_camera
 
 
@@ -372,10 +377,8 @@ class UR5PickPlaceEnv(gym.Env):
         self.workspace_std = workspace_std
         self.workspace_bounds = None
 
-        self.action_dim = action_dim  # Support both 7D and 13D action spaces
-        self.capture_table = (
-            capture_table  # Whether to include table/plane in point clouds
-        )
+        self.action_dim = action_dim 
+        self.capture_table = capture_table
 
         # Connect to PyBullet
         if self.use_gui:
@@ -383,15 +386,13 @@ class UR5PickPlaceEnv(gym.Env):
         else:
             self.physics_client = p.connect(p.DIRECT)
 
-        # p.setGravity(0, 0, -9.8)
+        p.setGravity(0, 0, -9.8)
         p.setAdditionalSearchPath(pybullet_data.getDataPath())
 
-        # Load environment
-        if capture_table:
-            self.plane_id = p.loadURDF("plane.urdf")
-            self.table_id = p.loadURDF(
-                "table/table.urdf", [0.5, 0, 0], p.getQuaternionFromEuler([0, 0, 0])
-            )
+        # self.plane_id = p.loadURDF("plane.urdf")
+        self.table_id = p.loadURDF(
+            "table/table.urdf", [0.5, 0, 0], p.getQuaternionFromEuler([0, 0, 0])
+        )
 
         self.tray_pos = [0.5, 0.9, 0.6]
         self.tray_orn = p.getQuaternionFromEuler([0, 0, 0])
@@ -597,23 +598,30 @@ class UR5PickPlaceEnv(gym.Env):
 
     def _get_obs(self):
         """Get current observation"""
-        robot_state = self.robot.get_robot_state()  # Always 13D
+        robot_state = self.robot.get_robot_state()
 
         # Extract appropriate agent_pos based on action_dim
         if self.action_dim == 7:
-            # Return only joint positions (last 7 elements: 6 arm + 1 gripper)
             agent_pos = robot_state[6:13]
         elif self.action_dim == 13:
-            # Return full state (eef_pos + eef_orn + joints + gripper)
             agent_pos = robot_state
         else:
-            raise ValueError(
-                f"Unsupported action_dim: {self.action_dim}. Must be 7 or 13."
-            )
+            raise ValueError(f"Unsupported action_dim: {self.action_dim}. Must be 7 or 13.")
 
-        # # Hide table/plane if capture_table is False
-        # if not self.capture_table:
-        #     self._toggle_table_visibility(visible=False)
+        # Exclude table and plane from point cloud !!
+
+        print("Capture table flag is set to : ", self.capture_table)
+        print("Table ID is : ", self.table_id)
+
+        exclude_ids = []
+        if self.table_id is not None and not self.capture_table:
+            print("Excluding table from point clouds with {}".format(self.table_id))
+            exclude_ids.append(self.table_id)
+        # if self.plane_id is not None:
+        #     print("Excluding plane from point clouds with {}".format(self.plane_id))
+        #     exclude_ids.append(self.plane_id)
+
+        print("Exclude IDs for point cloud capture: ", exclude_ids)
 
         view_matrix = p.computeViewMatrix(
             cameraEyePosition=self.tp_cam_eye,
@@ -624,42 +632,41 @@ class UR5PickPlaceEnv(gym.Env):
             fov=60, aspect=1.0, nearVal=0.01, farVal=3.0
         )
 
-        width, height, rgb_img, depth_img, _ = p.getCameraImage(
+        # Capture with segmentation
+        width, height, rgb_img, depth_img, seg_img = p.getCameraImage(
             self.image_size,
             self.image_size,
             viewMatrix=view_matrix,
             projectionMatrix=proj_matrix,
+            flags=p.ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX
         )
-
-        # # Restore table/plane visibility after capture
-        # if not self.capture_table:
-        #     self._toggle_table_visibility(visible=True)
 
         rgb_img = np.array(rgb_img)[:, :, :3]
         depth_buffer = np.array(depth_img)
+        seg_img = np.array(seg_img)
+
+        exclude_mask_tp = np.zeros_like(seg_img, dtype=bool)
+        for obj_id in exclude_ids:
+            exclude_mask_tp |= (seg_img == obj_id)
+       
+        exclude_mask_flat_tp = exclude_mask_tp.flatten()
+
 
         point_cloud = depth_to_point_cloud(
-            depth_buffer, view_matrix, proj_matrix, self.image_size, self.image_size
+            depth_buffer, view_matrix, proj_matrix, self.image_size, self.image_size , exclude_mask=exclude_mask_flat_tp
         )
 
+        # Workspace cropping
         if self.use_workspace_crop:
             if self.workspace_bounds is None:
                 self.workspace_bounds = compute_workspace_bounds(
                     point_cloud, n_std=self.workspace_std
                 )
                 if self.workspace_bounds is not None:
-                    print(
-                        f"Computed workspace bounds (mean ± {self.workspace_std}*std):"
-                    )
-                    print(
-                        f"  X: [{self.workspace_bounds[0][0]:.3f}, {self.workspace_bounds[0][1]:.3f}]"
-                    )
-                    print(
-                        f"  Y: [{self.workspace_bounds[1][0]:.3f}, {self.workspace_bounds[1][1]:.3f}]"
-                    )
-                    print(
-                        f"  Z: [{self.workspace_bounds[2][0]:.3f}, {self.workspace_bounds[2][1]:.3f}]"
-                    )
+                    print(f"Computed workspace bounds (mean ± {self.workspace_std}*std):")
+                    print(f"  X: [{self.workspace_bounds[0][0]:.3f}, {self.workspace_bounds[0][1]:.3f}]")
+                    print(f"  Y: [{self.workspace_bounds[1][0]:.3f}, {self.workspace_bounds[1][1]:.3f}]")
+                    print(f"  Z: [{self.workspace_bounds[2][0]:.3f}, {self.workspace_bounds[2][1]:.3f}]")
 
             if self.workspace_bounds is not None:
                 mask = crop_workspace(point_cloud, self.workspace_bounds)
@@ -667,9 +674,7 @@ class UR5PickPlaceEnv(gym.Env):
                 if self.current_step == 0:
                     print(f"  After workspace crop: {point_cloud.shape[0]} points")
 
-        # print(f"Point cloud before downsampling: {point_cloud.shape[0]} points")
-        # print(f"Number of points required: {self.num_points}")
-
+        # Downsample or pad to target number of points
         if point_cloud.shape[0] == 0:
             point_cloud = np.zeros((self.num_points, 3), dtype=np.float32)
         elif point_cloud.shape[0] > self.num_points:
@@ -688,8 +693,9 @@ class UR5PickPlaceEnv(gym.Env):
 
         return obs_dict
 
-    def render(self, mode="rgb_array"):
-        """Render the environment"""
+    def render(self, mode="rgb_array"): # not used anywhere -> so lite 
+        """Render the environment
+        """
         view_matrix = p.computeViewMatrix(
             cameraEyePosition=self.tp_cam_eye,
             cameraTargetPosition=self.tp_cam_target,
@@ -724,3 +730,4 @@ class UR5PickPlaceEnv(gym.Env):
         self._seed = seed
         random.seed(seed)
         np.random.seed(seed)
+
