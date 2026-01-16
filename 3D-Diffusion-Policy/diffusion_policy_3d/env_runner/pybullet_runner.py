@@ -53,6 +53,7 @@ class UR5PyBulletRunner(BaseRunner):
         use_workspace_crop=True,
         workspace_std=30.0,
         action_dim=7,
+        capture_table=False
     ):
         super().__init__(output_dir)
 
@@ -76,7 +77,7 @@ class UR5PyBulletRunner(BaseRunner):
                         use_workspace_crop=use_workspace_crop,
                         workspace_std=workspace_std,
                         action_dim=self.action_dim,
-                        capture_table=False,
+                        capture_table=capture_table,
                     )
                 ),
                 n_obs_steps=n_obs_steps,
