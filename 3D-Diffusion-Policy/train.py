@@ -372,26 +372,110 @@ class TrainDP3Workspace:
             self.epoch += 1
             del step_log
 
+    # def eval(self):
+    #     # load the latest checkpoint
+    #     print("Hellooooooo")
+    #     cfg = copy.deepcopy(self.cfg)
+        
+    #     # print(cfg)
+    #     # lastest_ckpt_path = self.get_checkpoint_path(tag="latest")
+    #     # if lastest_ckpt_path.is_file():
+    #         # cprint(f"Resuming from checkpoint {lastest_ckpt_path}", "magenta")
+    #         # self.load_checkpoint(path=lastest_ckpt_path)
+    #     #  
+    #     # lastest_ckpt_path = "/scratch2/cross-emb/DP3_outputs/pybullet_pick_place-dp3-no_eef_seed0/checkpoints"
+    #     # lastest_ckpt_path = "/home/aniruth/Desktop/RRC/3D-Diffusion-Policy/checkpoints/latest.ckpt"
+    #     lastest_ckpt_path = "/home/aniruth/Desktop/RRC/3D-Diffusion-Policy/checkpoints/latest.ckpt"
+    #     print(f"Checkpoint is loaded from : {lastest_ckpt_path}")
+        
+    #     self.load_checkpoint(path=lastest_ckpt_path)
+
+    #     dataset: BaseDataset
+    #     dataset = hydra.utils.instantiate(cfg.task.dataset)
+
+    #     assert isinstance(dataset, BaseDataset), print(
+    #         f"dataset must be BaseDataset, got {type(dataset)}"
+    #     )
+
+    #     train_dataloader = DataLoader(dataset, **cfg.dataloader)
+    #     normalizer = dataset.get_normalizer()
+
+    #     # configure validation dataset
+    #     val_dataset = dataset.get_validation_dataset()
+    #     val_dataloader = DataLoader(val_dataset, **cfg.val_dataloader)
+
+        
+    #     self.model.set_normalizer(normalizer)
+    #     if cfg.training.use_ema:
+    #         self.ema_model.set_normalizer(normalizer)
+        
+        
+    #     policy = self.model
+    #     if cfg.training.use_ema:
+    #         policy = self.ema_model
+    #         print("Using EMA model for evaluation")
+
+
+    #     policy.eval()
+    #     policy.cuda()
+
+    #     # DEBUG: Verify normalizer is set correctly
+    #     cprint("=" * 50, "yellow")
+    #     cprint("NORMALIZER KEYS:", "yellow")
+    #     cprint(f"{list(policy.normalizer.params_dict.keys())}", "yellow")
+    #     # cprint("=" * 50, "yellow")
+
+    #     # Configure environment runner
+    #     env_runner: BaseRunner = hydra.utils.instantiate(
+    #         cfg.task.env_runner, output_dir=self.output_dir
+    #     )
+    #     assert isinstance(env_runner, BaseRunner)
+
+    #     # Check environment observation keys
+    #     obs = env_runner.env_test.reset()
+    #     cprint("=" * 50, "cyan")
+    #     cprint("ENVIRONMENT OBSERVATION KEYS:", "cyan")
+    #     cprint(f"{list(obs.keys())}", "cyan")
+    #     cprint("=" * 50, "cyan")
+
+
+    #     # Run evaluation
+    #     cprint(f"Running evaluation with policy...", "green")
+    #     runner_log = env_runner.run(policy , dataset = dataset)
+
+    #     # Print results
+    #     cprint("=" * 50, "magenta")
+    #     cprint("EVALUATION RESULTS:", "magenta")
+    #     for key, value in runner_log.items():
+    #         if isinstance(value, (int, float)):
+    #             cprint(f"  {key}: {value:.4f}", "magenta")
+    #     cprint("=" * 50, "magenta")
+
+    #     return runner_log
+
     def eval(self):
         # load the latest checkpoint
         print("Hellooooooo")
         cfg = copy.deepcopy(self.cfg)
         
-        # print(cfg)
-        # lastest_ckpt_path = self.get_checkpoint_path(tag="latest")
-        # if lastest_ckpt_path.is_file():
-            # cprint(f"Resuming from checkpoint {lastest_ckpt_path}", "magenta")
-            # self.load_checkpoint(path=lastest_ckpt_path)
-        #  
-        # lastest_ckpt_path = "/scratch2/cross-emb/DP3_outputs/pybullet_pick_place-dp3-no_eef_seed0/checkpoints"
-        # lastest_ckpt_path = "/home/aniruth/Desktop/RRC/3D-Diffusion-Policy/checkpoints/latest.ckpt"
-        lastest_ckpt_path = "/home/aniruth/Desktop/RRC/3D-Diffusion-Policy/checkpoints/6k-ckpts/latest.ckpt"
+        lastest_ckpt_path = "/home/aniruth/Desktop/RRC/3D-Diffusion-Policy/checkpoints/latest.ckpt"
         print(f"Checkpoint is loaded from : {lastest_ckpt_path}")
         
         self.load_checkpoint(path=lastest_ckpt_path)
-        
-        dataset: BaseDataset = hydra.utils.instantiate(cfg.task.dataset)
+
+        dataset: BaseDataset
+        dataset = hydra.utils.instantiate(cfg.task.dataset)
+
+        assert isinstance(dataset, BaseDataset), print(
+            f"dataset must be BaseDataset, got {type(dataset)}"
+        )
+
+        train_dataloader = DataLoader(dataset, **cfg.dataloader)
         normalizer = dataset.get_normalizer()
+
+        # configure validation dataset
+        val_dataset = dataset.get_validation_dataset()
+        val_dataloader = DataLoader(val_dataset, **cfg.val_dataloader)
 
         
         self.model.set_normalizer(normalizer)
@@ -404,7 +488,6 @@ class TrainDP3Workspace:
             policy = self.ema_model
             print("Using EMA model for evaluation")
 
-
         policy.eval()
         policy.cuda()
 
@@ -412,7 +495,6 @@ class TrainDP3Workspace:
         cprint("=" * 50, "yellow")
         cprint("NORMALIZER KEYS:", "yellow")
         cprint(f"{list(policy.normalizer.params_dict.keys())}", "yellow")
-        # cprint("=" * 50, "yellow")
 
         # Configure environment runner
         env_runner: BaseRunner = hydra.utils.instantiate(
@@ -427,9 +509,98 @@ class TrainDP3Workspace:
         cprint(f"{list(obs.keys())}", "cyan")
         cprint("=" * 50, "cyan")
 
-        # Run evaluation
+        # ========== VALIDATION: GT vs PRED ACTIONS ==========
+        cprint("=" * 50, "magenta")
+        cprint("Running validation to collect GT vs Pred actions...", "magenta")
+        cprint("=" * 50, "magenta")
+        
+        device = torch.device(cfg.training.device)
+        all_gt_actions = []
+        all_pred_actions = []
+        
+        with torch.no_grad():
+            for batch_idx, batch in enumerate(tqdm.tqdm(val_dataloader, desc="Validation")):
+                # Move batch to device
+                batch = dict_apply(batch, lambda x: x.to(device, non_blocking=True))
+                
+                obs_dict = batch["obs"]
+                gt_action = batch["action"]  # Shape: (B, T, action_dim)
+                
+                # Get predictions
+                result = policy.predict_action(obs_dict)
+                pred_action = result["action_pred"]  # Shape: (B, T, action_dim)
+                
+                # Move to CPU and convert to numpy
+                gt_action_np = gt_action.cpu().numpy()
+                pred_action_np = pred_action.cpu().numpy()
+                
+                # Store actions
+                all_gt_actions.append(gt_action_np)
+                all_pred_actions.append(pred_action_np)
+        
+        # Concatenate all batches
+        all_gt_actions = np.concatenate(all_gt_actions, axis=0)  # (N, T, action_dim)
+        all_pred_actions = np.concatenate(all_pred_actions, axis=0)  # (N, T, action_dim)
+        
+        # Create output directory for action comparisons
+        action_comparison_dir = os.path.join(self.output_dir, "action_comparisons")
+        os.makedirs(action_comparison_dir, exist_ok=True)
+        
+        # Save GT and Pred actions
+        gt_actions_path = os.path.join(action_comparison_dir, "gt_actions.txt")
+        pred_actions_path = os.path.join(action_comparison_dir, "pred_actions.txt")
+        
+        # Save with timestamp
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        gt_actions_path_ts = os.path.join(action_comparison_dir, f"gt_actions_{timestamp}.txt")
+        pred_actions_path_ts = os.path.join(action_comparison_dir, f"pred_actions_{timestamp}.txt")
+        
+        # Save arrays
+        np.savetxt(gt_actions_path, all_gt_actions.reshape(-1, all_gt_actions.shape[-1]), 
+                fmt='%.6f', header=f'Shape: {all_gt_actions.shape}')
+        np.savetxt(pred_actions_path, all_pred_actions.reshape(-1, all_pred_actions.shape[-1]), 
+                fmt='%.6f', header=f'Shape: {all_pred_actions.shape}')
+        
+        # Also save timestamped versions
+        np.savetxt(gt_actions_path_ts, all_gt_actions.reshape(-1, all_gt_actions.shape[-1]), 
+                fmt='%.6f', header=f'Shape: {all_gt_actions.shape}')
+        np.savetxt(pred_actions_path_ts, all_pred_actions.reshape(-1, all_pred_actions.shape[-1]), 
+                fmt='%.6f', header=f'Shape: {all_pred_actions.shape}')
+        
+        # Calculate and save statistics
+        mse_per_dim = np.mean((all_gt_actions - all_pred_actions) ** 2, axis=(0, 1))
+        mae_per_dim = np.mean(np.abs(all_gt_actions - all_pred_actions), axis=(0, 1))
+        overall_mse = np.mean((all_gt_actions - all_pred_actions) ** 2)
+        overall_mae = np.mean(np.abs(all_gt_actions - all_pred_actions))
+        
+        stats_path = os.path.join(action_comparison_dir, f"action_stats_{timestamp}.txt")
+        with open(stats_path, 'w') as f:
+            f.write(f"Validation Action Statistics\n")
+            f.write(f"=" * 50 + "\n")
+            f.write(f"GT Actions Shape: {all_gt_actions.shape}\n")
+            f.write(f"Pred Actions Shape: {all_pred_actions.shape}\n")
+            f.write(f"\nOverall MSE: {overall_mse:.6f}\n")
+            f.write(f"Overall MAE: {overall_mae:.6f}\n")
+            f.write(f"\nPer-dimension MSE:\n")
+            for i, mse in enumerate(mse_per_dim):
+                f.write(f"  Dimension {i}: {mse:.6f}\n")
+            f.write(f"\nPer-dimension MAE:\n")
+            for i, mae in enumerate(mae_per_dim):
+                f.write(f"  Dimension {i}: {mae:.6f}\n")
+        
+        cprint("=" * 50, "green")
+        cprint(f"Saved GT actions to: {gt_actions_path}", "green")
+        cprint(f"Saved Pred actions to: {pred_actions_path}", "green")
+        cprint(f"Saved statistics to: {stats_path}", "green")
+        cprint(f"Overall MSE: {overall_mse:.6f}", "green")
+        cprint(f"Overall MAE: {overall_mae:.6f}", "green")
+        cprint("=" * 50, "green")
+        
+        # ========== END VALIDATION ==========
+
+        # Run evaluation on environment
         cprint(f"Running evaluation with policy...", "green")
-        runner_log = env_runner.run(policy)
+        runner_log = env_runner.run(policy, dataset=dataset)
 
         # Print results
         cprint("=" * 50, "magenta")
