@@ -298,7 +298,7 @@ class UR5Robotiq85:
     def set_gripper(self, gripper_angle):
         """Set gripper angle directly"""
         p.setJointMotorControl2(
-            self.id, self.mimic_parent_id, p.POSITION_CONTROL, targetPosition=gripper_angle
+            self.id, self.mimic_parent_id, p.POSITION_CONTROL, targetPosition=gripper_angle , force = 100
         )
 
 
@@ -549,9 +549,9 @@ class UR5PickPlaceEnv(gym.Env):
         else:
             raise ValueError(f"Action must be 7D or 13D, got {len(action)}D")
 
-        print(joint_deltas)
+        # print(joint_deltas)
         arm_deltas = joint_deltas[:6]
-        gripper_delta = joint_deltas[6]  # Single scalar value
+        gripper_delta = joint_deltas[6]  
         
         # Get current joint positions
         current_joint_pos = self.robot.get_joint_positions()
@@ -562,15 +562,17 @@ class UR5PickPlaceEnv(gym.Env):
 
         # Apply the target positions
         self.robot.set_arm_joints(target_arm)
+
+        print(f"Target griper pos to reach : {target_gripper}")
         self.robot.set_gripper(target_gripper)
-        
+
         # Step simulation for smooth motion
-        for _ in range(50):
+        for _ in range(500):
             p.stepSimulation()
 
-        time.sleep(0.05)
-        
+        time.sleep(0.15)
 
+        print(f"Actual griper pos reached : {self.robot.get_joint_positions()[6]}\n\n")
 
         obs = self._get_obs()
 
