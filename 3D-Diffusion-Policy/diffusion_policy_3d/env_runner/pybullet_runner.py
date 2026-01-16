@@ -47,7 +47,7 @@ class UR5PyBulletRunner(BaseRunner):
         fps=10,
         crf=22,
         tqdm_interval_sec=5.0,
-        use_gui=False,
+        use_gui=True,
         num_points=6000,
         image_size=224,
         use_workspace_crop=True,
@@ -171,10 +171,10 @@ class UR5PyBulletRunner(BaseRunner):
                 # Temporarily store the cube position in the base environment
                 self.env_test.env.env.cube_start_pos = cube_start_pos
                 self.env_test.env.env.cube_start_orn = cube_start_orn
-                self.env_test.reset()
-                obs = self.env_test.env.env.reset(
-                    cube_start_pos=cube_start_pos, cube_start_orn=cube_start_orn
-                )
+                obs = self.env_test.reset(cube_start_pos=cube_start_pos, cube_start_orn=cube_start_orn)
+                # obs = self.env_test.env.env.reset(
+                    # cube_start_pos=cube_start_pos, cube_start_orn=cube_start_orn
+                # )
             else:
                 cprint(
                     f"Episode {episode_id}: Using random cube position TO RESET",
