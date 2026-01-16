@@ -240,7 +240,7 @@ def main():
     print("Solution 2: Track Target State (No Drift)")
     print("=" * 60)
     
-    actions_file = "actions.txt"
+    actions_file = "pred-act-formatted.txt"
     
     if not os.path.exists(actions_file):
         print(f"Error: File not found: {actions_file}")
