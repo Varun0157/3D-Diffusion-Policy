@@ -502,7 +502,7 @@ class UR5PickPlaceEnv(gym.Env):
         if cube_start_pos is not None:
             self.cube_start_pos = cube_start_pos
         else:
-            print("Randomizing cube start position.")
+            cprint("Randomizing cube start position." , "red")
             self.cube_start_pos = [
                 random.uniform(0.3, 0.7),
                 random.uniform(-0.1, 0.1),
@@ -519,7 +519,7 @@ class UR5PickPlaceEnv(gym.Env):
                 # Assume Euler angles
                 cube_orn_quat = p.getQuaternionFromEuler(cube_start_orn)
         else:
-            print("Using default cube(random) orientation.")
+            cprint("Using default cube(random) orientation.", "red")
             cube_orn_quat = p.getQuaternionFromEuler([0, 0, 0])
 
         self.cube_id = p.loadURDF("cube_small.urdf", self.cube_start_pos, cube_orn_quat)
@@ -541,6 +541,8 @@ class UR5PickPlaceEnv(gym.Env):
         """
         self.current_step += 1
 
+        print("Shape of action received in env step: ", action.shape)
+        
         # Handle both 7D and 13D action spaces
         if len(action) == 13:
             joint_deltas = action[6:13]
@@ -553,20 +555,16 @@ class UR5PickPlaceEnv(gym.Env):
         arm_deltas = joint_deltas[:6]
         gripper_delta = joint_deltas[6]  
         
-        # Get current joint positions
         current_joint_pos = self.robot.get_joint_positions()
         
-        # Apply deltas to get target positions
         target_arm = current_joint_pos[:6] + arm_deltas
         target_gripper = current_joint_pos[6] + gripper_delta
 
-        # Apply the target positions
         self.robot.set_arm_joints(target_arm)
 
         print(f"Target griper pos to reach : {target_gripper}")
         self.robot.set_gripper(target_gripper)
 
-        # Step simulation for smooth motion
         for _ in range(500):
             p.stepSimulation()
 
@@ -575,7 +573,7 @@ class UR5PickPlaceEnv(gym.Env):
         print(f"Actual griper pos reached : {self.robot.get_joint_positions()[6]}\n\n")
 
         obs = self._get_obs()
-
+    
         # Check success: cube in tray
         reward = 0.0
         done = False
