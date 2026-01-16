@@ -431,19 +431,11 @@ class TrainDP3Workspace:
     #     )
     #     assert isinstance(env_runner, BaseRunner)
 
-    #     # Check environment observation keys
-    #     obs = env_runner.env_test.reset()
-    #     cprint("=" * 50, "cyan")
-    #     cprint("ENVIRONMENT OBSERVATION KEYS:", "cyan")
-    #     cprint(f"{list(obs.keys())}", "cyan")
-    #     cprint("=" * 50, "cyan")
 
 
-    #     # Run evaluation
     #     cprint(f"Running evaluation with policy...", "green")
     #     runner_log = env_runner.run(policy , dataset = dataset)
 
-    #     # Print results
     #     cprint("=" * 50, "magenta")
     #     cprint("EVALUATION RESULTS:", "magenta")
     #     for key, value in runner_log.items():
@@ -502,12 +494,7 @@ class TrainDP3Workspace:
         )
         assert isinstance(env_runner, BaseRunner)
 
-        # Check environment observation keys
-        obs = env_runner.env_test.reset()
-        cprint("=" * 50, "cyan")
-        cprint("ENVIRONMENT OBSERVATION KEYS:", "cyan")
-        cprint(f"{list(obs.keys())}", "cyan")
-        cprint("=" * 50, "cyan")
+
 
         # ========== VALIDATION: GT vs PRED ACTIONS ==========
         cprint("=" * 50, "magenta")
@@ -560,12 +547,7 @@ class TrainDP3Workspace:
                 fmt='%.6f', header=f'Shape: {all_gt_actions.shape}')
         np.savetxt(pred_actions_path, all_pred_actions.reshape(-1, all_pred_actions.shape[-1]), 
                 fmt='%.6f', header=f'Shape: {all_pred_actions.shape}')
-        
-        # Also save timestamped versions
-        np.savetxt(gt_actions_path_ts, all_gt_actions.reshape(-1, all_gt_actions.shape[-1]), 
-                fmt='%.6f', header=f'Shape: {all_gt_actions.shape}')
-        np.savetxt(pred_actions_path_ts, all_pred_actions.reshape(-1, all_pred_actions.shape[-1]), 
-                fmt='%.6f', header=f'Shape: {all_pred_actions.shape}')
+
         
         # Calculate and save statistics
         mse_per_dim = np.mean((all_gt_actions - all_pred_actions) ** 2, axis=(0, 1))
