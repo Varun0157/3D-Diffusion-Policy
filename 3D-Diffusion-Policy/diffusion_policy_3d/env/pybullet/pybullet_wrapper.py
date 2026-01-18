@@ -10,6 +10,7 @@ from gym import spaces
 import random
 import time
 
+
 def compute_workspace_bounds(pc_xyz, n_std=30):
     """
     Compute workspace bounds using mean ± n_std * std
@@ -87,7 +88,7 @@ def depth_to_point_cloud(
     near=0.01,
     far=3.0,
     max_depth=2.5,
-    exclude_mask=None
+    exclude_mask=None,
 ):
     """
     Convert a PyBullet depth buffer to a 3D point cloud in world coordinates,
@@ -128,8 +129,8 @@ def depth_to_point_cloud(
 
     # # Filter points beyond max_depth
     valid_mask = points_camera[:, 2] < max_depth
-    
-    if exclude_mask is not None: # to exclude table and plane
+
+    if exclude_mask is not None:  # to exclude table and plane
         print("Excluding points based on provided mask.")
         valid_mask = valid_mask & (~exclude_mask)
 
@@ -152,7 +153,7 @@ class UR5Robotiq85:
     def load(self):
         self.id = p.loadURDF(
             "/home/cross-emb/3D-Diffusion-Policy/3D-Diffusion-Policy/diffusion_policy_3d/env/pybullet/urdf/ur5_robotiq_85.urdf",
-            # "/home/aniruth/Desktop/RRC/3D-Diffusion-Policy/3D-Diffusion-Policy/diffusion_policy_3d/env/pybullet/urdf/ur5_robotiq_85.urdf" , 
+            # "/home/aniruth/Desktop/RRC/3D-Diffusion-Policy/3D-Diffusion-Policy/diffusion_policy_3d/env/pybullet/urdf/ur5_robotiq_85.urdf" ,
             self.base_pos,
             self.base_ori,
             useFixedBase=True,
@@ -288,7 +289,6 @@ class UR5Robotiq85:
         limits_upper = self.arm_upper_limits + [self.gripper_range[1]]
         return np.array(limits_lower), np.array(limits_upper)
 
-
     def set_arm_joints(self, joint_positions):
         """Set arm joint positions directly"""
         for i, joint_id in enumerate(self.arm_controllable_joints):
@@ -303,9 +303,12 @@ class UR5Robotiq85:
     def set_gripper(self, gripper_angle):
         """Set gripper angle directly"""
         p.setJointMotorControl2(
-            self.id, self.mimic_parent_id, p.POSITION_CONTROL, targetPosition=gripper_angle , force = 100
+            self.id,
+            self.mimic_parent_id,
+            p.POSITION_CONTROL,
+            targetPosition=gripper_angle,
+            force=100,
         )
-
 
     def set_joint_positions(self, joint_positions):
         """
@@ -329,7 +332,7 @@ class UR5Robotiq85:
                 p.POSITION_CONTROL,
                 targetPosition=gripper_angle,
                 force=200,  # ← Make sure this is here too
-                maxVelocity=1.0
+                maxVelocity=1.0,
             )
 
     def set_joint_positions(self, joint_positions):
@@ -337,7 +340,6 @@ class UR5Robotiq85:
         self.set_arm_joints(joint_positions[:6])
         if len(joint_positions) > 6:
             self.set_gripper(joint_positions[6])
-
 
     def get_eef_position(self):
         """Get end-effector 3D position"""
@@ -358,7 +360,7 @@ class UR5PickPlaceEnv(gym.Env):
 
     def __init__(
         self,
-        use_gui=True,
+        use_gui=False,
         num_points=6000,
         image_size=224,
         use_workspace_crop=True,
@@ -377,7 +379,7 @@ class UR5PickPlaceEnv(gym.Env):
         self.workspace_std = workspace_std
         self.workspace_bounds = None
 
-        self.action_dim = action_dim 
+        self.action_dim = action_dim
         self.capture_table = capture_table
 
         # Connect to PyBullet
@@ -484,26 +486,26 @@ class UR5PickPlaceEnv(gym.Env):
             p.setJointMotorControl2(
                 self.robot.id, joint_id, p.POSITION_CONTROL, rest_pose[i]
             )
-        
+
         p.setJointMotorControl2(
-            self.robot.id, 
+            self.robot.id,
             self.robot.mimic_parent_id,
             p.POSITION_CONTROL,
             targetPosition=0.0,
-            force=200
+            force=200,
         )
-        
+
         # Stabilize
         print("\nStabilizing robot at rest pose...")
         for _ in range(1000):
             p.stepSimulation()
-        
+
         print("\n\nStarting position of robot : ", self.robot.get_joint_positions())
         # Use provided cube position or generate random one
         if cube_start_pos is not None:
             self.cube_start_pos = cube_start_pos
         else:
-            cprint("Randomizing cube start position." , "red")
+            cprint("Randomizing cube start position.", "red")
             self.cube_start_pos = [
                 random.uniform(0.3, 0.7),
                 random.uniform(-0.1, 0.1),
@@ -543,7 +545,7 @@ class UR5PickPlaceEnv(gym.Env):
         self.current_step += 1
 
         print("Shape of action received in env step: ", action.shape)
-        
+
         # Handle both 7D and 13D action spaces
         if len(action) == 13:
             joint_deltas = action[6:13]
@@ -554,10 +556,10 @@ class UR5PickPlaceEnv(gym.Env):
 
         # print(joint_deltas)
         arm_deltas = joint_deltas[:6]
-        gripper_delta = joint_deltas[6]  
-        
+        gripper_delta = joint_deltas[6]
+
         current_joint_pos = self.robot.get_joint_positions()
-        
+
         target_arm = current_joint_pos[:6] + arm_deltas
         target_gripper = current_joint_pos[6] + gripper_delta
 
@@ -574,7 +576,7 @@ class UR5PickPlaceEnv(gym.Env):
         print(f"Actual griper pos reached : {self.robot.get_joint_positions()[6]}\n\n")
 
         obs = self._get_obs()
-    
+
         # Check success: cube in tray
         reward = 0.0
         done = False
@@ -594,7 +596,7 @@ class UR5PickPlaceEnv(gym.Env):
             done = True
 
         info = {"is_success": self.is_success_flag}
-        return obs, reward, done, info    
+        return obs, reward, done, info
 
     def _get_obs(self):
         """Get current observation"""
@@ -606,7 +608,9 @@ class UR5PickPlaceEnv(gym.Env):
         elif self.action_dim == 13:
             agent_pos = robot_state
         else:
-            raise ValueError(f"Unsupported action_dim: {self.action_dim}. Must be 7 or 13.")
+            raise ValueError(
+                f"Unsupported action_dim: {self.action_dim}. Must be 7 or 13."
+            )
 
         # Exclude table and plane from point cloud !!
 
@@ -638,7 +642,7 @@ class UR5PickPlaceEnv(gym.Env):
             self.image_size,
             viewMatrix=view_matrix,
             projectionMatrix=proj_matrix,
-            flags=p.ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX
+            flags=p.ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX,
         )
 
         rgb_img = np.array(rgb_img)[:, :, :3]
@@ -647,13 +651,17 @@ class UR5PickPlaceEnv(gym.Env):
 
         exclude_mask_tp = np.zeros_like(seg_img, dtype=bool)
         for obj_id in exclude_ids:
-            exclude_mask_tp |= (seg_img == obj_id)
-       
+            exclude_mask_tp |= seg_img == obj_id
+
         exclude_mask_flat_tp = exclude_mask_tp.flatten()
 
-
         point_cloud = depth_to_point_cloud(
-            depth_buffer, view_matrix, proj_matrix, self.image_size, self.image_size , exclude_mask=exclude_mask_flat_tp
+            depth_buffer,
+            view_matrix,
+            proj_matrix,
+            self.image_size,
+            self.image_size,
+            exclude_mask=exclude_mask_flat_tp,
         )
 
         # Workspace cropping
@@ -663,10 +671,18 @@ class UR5PickPlaceEnv(gym.Env):
                     point_cloud, n_std=self.workspace_std
                 )
                 if self.workspace_bounds is not None:
-                    print(f"Computed workspace bounds (mean ± {self.workspace_std}*std):")
-                    print(f"  X: [{self.workspace_bounds[0][0]:.3f}, {self.workspace_bounds[0][1]:.3f}]")
-                    print(f"  Y: [{self.workspace_bounds[1][0]:.3f}, {self.workspace_bounds[1][1]:.3f}]")
-                    print(f"  Z: [{self.workspace_bounds[2][0]:.3f}, {self.workspace_bounds[2][1]:.3f}]")
+                    print(
+                        f"Computed workspace bounds (mean ± {self.workspace_std}*std):"
+                    )
+                    print(
+                        f"  X: [{self.workspace_bounds[0][0]:.3f}, {self.workspace_bounds[0][1]:.3f}]"
+                    )
+                    print(
+                        f"  Y: [{self.workspace_bounds[1][0]:.3f}, {self.workspace_bounds[1][1]:.3f}]"
+                    )
+                    print(
+                        f"  Z: [{self.workspace_bounds[2][0]:.3f}, {self.workspace_bounds[2][1]:.3f}]"
+                    )
 
             if self.workspace_bounds is not None:
                 mask = crop_workspace(point_cloud, self.workspace_bounds)
@@ -693,9 +709,8 @@ class UR5PickPlaceEnv(gym.Env):
 
         return obs_dict
 
-    def render(self, mode="rgb_array"): # not used anywhere -> so lite 
-        """Render the environment
-        """
+    def render(self, mode="rgb_array"):  # not used anywhere -> so lite
+        """Render the environment"""
         view_matrix = p.computeViewMatrix(
             cameraEyePosition=self.tp_cam_eye,
             cameraTargetPosition=self.tp_cam_target,
@@ -730,4 +745,3 @@ class UR5PickPlaceEnv(gym.Env):
         self._seed = seed
         random.seed(seed)
         np.random.seed(seed)
-
