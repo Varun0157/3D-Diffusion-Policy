@@ -565,7 +565,7 @@ class UR5PickPlaceEnv(gym.Env):
 
         self.robot.set_arm_joints(target_arm)
 
-        print(f"Target griper pos to reach : {target_gripper}")
+        # print(f"Target griper pos to reach : {target_gripper}")
         self.robot.set_gripper(target_gripper)
 
         for _ in range(500):
@@ -573,7 +573,7 @@ class UR5PickPlaceEnv(gym.Env):
 
         time.sleep(0.15)
 
-        print(f"Actual griper pos reached : {self.robot.get_joint_positions()[6]}\n\n")
+        # print(f"Actual griper pos reached : {self.robot.get_joint_positions()[6]}\n\n")
 
         obs = self._get_obs()
 
@@ -614,18 +614,18 @@ class UR5PickPlaceEnv(gym.Env):
 
         # Exclude table and plane from point cloud !!
 
-        print("Capture table flag is set to : ", self.capture_table)
-        print("Table ID is : ", self.table_id)
+        # print("Capture table flag is set to : ", self.capture_table)
+        # print("Table ID is : ", self.table_id)
 
         exclude_ids = []
         if self.table_id is not None and not self.capture_table:
-            print("Excluding table from point clouds with {}".format(self.table_id))
+            # print("Excluding table from point clouds with {}".format(self.table_id))
             exclude_ids.append(self.table_id)
         # if self.plane_id is not None:
         #     print("Excluding plane from point clouds with {}".format(self.plane_id))
         #     exclude_ids.append(self.plane_id)
 
-        print("Exclude IDs for point cloud capture: ", exclude_ids)
+        # print("Exclude IDs for point cloud capture: ", exclude_ids)
 
         view_matrix = p.computeViewMatrix(
             cameraEyePosition=self.tp_cam_eye,
