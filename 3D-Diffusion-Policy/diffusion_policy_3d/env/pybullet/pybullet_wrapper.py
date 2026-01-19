@@ -131,7 +131,7 @@ def depth_to_point_cloud(
     valid_mask = points_camera[:, 2] < max_depth
 
     if exclude_mask is not None:  # to exclude table and plane
-        print("Excluding points based on provided mask.")
+        # print("Excluding points based on provided mask.")
         valid_mask = valid_mask & (~exclude_mask)
 
     points_camera = points_camera[valid_mask]
@@ -544,7 +544,7 @@ class UR5PickPlaceEnv(gym.Env):
         """
         self.current_step += 1
 
-        print("Shape of action received in env step: ", action.shape)
+        # print("Shape of action received in env step: ", action.shape)
 
         # Handle both 7D and 13D action spaces
         if len(action) == 13:
@@ -565,7 +565,7 @@ class UR5PickPlaceEnv(gym.Env):
 
         self.robot.set_arm_joints(target_arm)
 
-        # print(f"Target griper pos to reach : {target_gripper}")
+        print(f"Target griper pos to reach : {target_gripper}")
         self.robot.set_gripper(target_gripper)
 
         for _ in range(500):
@@ -573,7 +573,7 @@ class UR5PickPlaceEnv(gym.Env):
 
         time.sleep(0.15)
 
-        # print(f"Actual griper pos reached : {self.robot.get_joint_positions()[6]}\n\n")
+        print(f"Actual griper pos reached : {self.robot.get_joint_positions()[6]}\n\n")
 
         obs = self._get_obs()
 

@@ -450,7 +450,7 @@ class TrainDP3Workspace:
         print("Hellooooooo")
         cfg = copy.deepcopy(self.cfg)
         
-        lastest_ckpt_path = "/home/aniruth/Desktop/RRC/3D-Diffusion-Policy/checkpoints/latest.ckpt"
+        lastest_ckpt_path = "/home/varun-edachali/Research/RRC/policy/3D-Diffusion-Policy/3D-Diffusion-Policy/data/outputs/epoch=0950.ckpt"
         print(f"Checkpoint is loaded from : {lastest_ckpt_path}")
         
         self.load_checkpoint(path=lastest_ckpt_path)
