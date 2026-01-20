@@ -21,9 +21,20 @@ for t, gt, pred in pattern.findall(text):
     gt_vals.append(float(gt))
     pred_vals.append(float(pred))
 
-plt.figure()
+plt.figure(figsize=(10, 4))
 plt.plot(timesteps, gt_vals, label="GT Gripper")
 plt.plot(timesteps, pred_vals, label="Pred Gripper")
+
+# ----- PICK REGION -----
+plt.axvspan(100, 125, alpha=0.15, label="Pick phase")
+plt.axvline(100, linestyle="--")
+plt.axvline(125, linestyle="--")
+
+# ----- PLACE REGION -----
+plt.axvspan(325, 350, alpha=0.15, label="Place phase")
+plt.axvline(325, linestyle="--")
+plt.axvline(350, linestyle="--")
+
 plt.xlabel("Timestep")
 plt.ylabel("Gripper Value")
 plt.legend()
