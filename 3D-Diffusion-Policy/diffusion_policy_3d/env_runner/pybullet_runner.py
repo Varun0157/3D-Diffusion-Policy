@@ -22,7 +22,7 @@ import numpy as np
 import wandb
 
 import os
-
+from datetime import datetime
 
 def save_pointcloud(pc, fname="debug_pc.ply"):
     pcd = o3d.geometry.PointCloud()
@@ -107,6 +107,16 @@ class UR5PyBulletRunner(BaseRunner):
         all_returns_test = []
         all_success_rates_test = []
 
+        log_dir = os.path.join(self.output_dir, "gripper_comparisons")
+        os.makedirs(log_dir, exist_ok=True)
+
+        # Create timestamped log file
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_file_path = os.path.join(log_dir, f"gripper_gt_vs_pred_{timestamp}.txt")
+        
+        cprint(f"Logging to: {log_file_path}", "cyan")
+
+
         cprint("=" * 50, "cyan")
         cprint(
             "Running on TEST environment with VALIDATION dataset cube positions", "cyan"
@@ -134,6 +144,8 @@ class UR5PyBulletRunner(BaseRunner):
             cube_start_orn = None
             gt_actions = None
             
+
+
 
             if dataset is not None:
                 try:
@@ -180,6 +192,21 @@ class UR5PyBulletRunner(BaseRunner):
                     cprint("Falling back to random cube position", "yellow")
                     cube_start_pos = None
                     cube_start_orn = None
+
+            # Open log file in append mode
+            with open(log_file_path, 'a') as log_file:
+                # Write episode header
+                log_file.write("="*100 + "\n")
+                log_file.write(f"EPISODE {episode_id}\n")
+                log_file.write("="*100 + "\n")
+                if cube_start_pos:
+                    log_file.write(f"Cube start position: {cube_start_pos}\n")
+                    log_file.write(f"Cube start orientation: {cube_start_orn}\n")
+                if gt_actions is not None:
+                    log_file.write(f"GT trajectory length: {len(gt_actions)} timesteps\n")
+                log_file.write(f"n_action_steps: {self.n_action_steps}\n")
+                log_file.write(f"n_obs_steps: {self.n_obs_steps}\n")
+                log_file.write("\n")
 
             # Reset environment with specified or random cube position
             if cube_start_pos is not None:
@@ -381,6 +408,13 @@ class UR5PyBulletRunner(BaseRunner):
                             cprint(f"      Pred Gripper: {pred_grippers[i]:.6f}", "yellow")
                             cprint(f"      Difference:   {abs(gt_grippers[i] - pred_grippers[i]):.6f}", "red")
                         
+                            with open(log_file_path, 'a') as log_file:
+                                log_file.write(f"  Action [{i}] - GT Timestep {actual_gt_timestep}:\n")
+                                log_file.write(f"    GT Gripper:   {gt_grippers[i]:.6f}\n")
+                                log_file.write(f"    Pred Gripper: {pred_grippers[i]:.6f}\n")
+                                log_file.write(f"    Difference:   {abs(gt_grippers[i] - pred_grippers[i]):.6f}\n")
+                                log_file.write("\n")
+                            
                         # Store for episode summary
                         episode_gt_grippers.extend(gt_grippers.tolist())
                         episode_pred_grippers.extend(pred_grippers.tolist())
@@ -401,14 +435,14 @@ class UR5PyBulletRunner(BaseRunner):
 
                 if done:
                     break
-            
-            # Episode summary
+
             if len(episode_gt_grippers) > 0 and len(episode_pred_grippers) > 0:
                 gt_arr = np.array(episode_gt_grippers)
                 pred_arr = np.array(episode_pred_grippers)
                 
                 mae_gt_pred = np.mean(np.abs(gt_arr - pred_arr))
                 
+                # Console output
                 cprint(f"\n{'='*80}", "magenta")
                 cprint(f"Episode {episode_id} Gripper Summary:", "magenta")
                 cprint(f"  Total actions compared: {len(gt_arr)}", "magenta")
@@ -416,7 +450,19 @@ class UR5PyBulletRunner(BaseRunner):
                 cprint(f"  GT Range:    [{gt_arr.min():.6f}, {gt_arr.max():.6f}]", "magenta")
                 cprint(f"  Pred Range:  [{pred_arr.min():.6f}, {pred_arr.max():.6f}]", "magenta")
                 cprint(f"{'='*80}\n", "magenta")
-
+                
+                # File output
+                with open(log_file_path, 'a') as log_file:
+                    log_file.write("\n" + "="*80 + "\n")
+                    log_file.write(f"EPISODE {episode_id} SUMMARY\n")
+                    log_file.write("="*80 + "\n")
+                    log_file.write(f"Total actions compared: {len(gt_arr)}\n")
+                    log_file.write(f"MAE (GT vs Pred):       {mae_gt_pred:.6f}\n")
+                    log_file.write(f"GT Range:    [{gt_arr.min():.6f}, {gt_arr.max():.6f}]\n")
+                    log_file.write(f"Pred Range:  [{pred_arr.min():.6f}, {pred_arr.max():.6f}]\n")
+                    log_file.write(f"Reward:      {reward_sum:.2f}\n")
+                    log_file.write(f"Success:     {self.env_test.env.is_success()}\n")
+                    log_file.write("="*80 + "\n\n\n")
 
             all_returns_test.append(reward_sum)
             all_success_rates_test.append(self.env_test.env.is_success())
@@ -441,13 +487,20 @@ class UR5PyBulletRunner(BaseRunner):
             "test_mean_score": SR_mean_test,
         }
 
+        with open(log_file_path, 'a') as log_file:
+            log_file.write("\n\n" + "="*100 + "\n")
+            log_file.write("FINAL SUMMARY - ALL EPISODES\n")
+            log_file.write("="*100 + "\n")
+            log_file.write(f"Mean Success Rate: {SR_mean_test:.3f}\n")
+            log_file.write(f"Mean Return:       {returns_mean_test:.3f}\n")
+            log_file.write(f"Total Episodes:    {self.episode_test}\n")
+            log_file.write("="*100 + "\n")
+
         cprint("=" * 50, "green")
-        cprint(
-            f"Test - Mean SR: {SR_mean_test:.3f}, "
-            f"Mean Return: {returns_mean_test:.3f}",
-            "green",
-        )
+        cprint(f"Test - Mean SR: {SR_mean_test:.3f}, Mean Return: {returns_mean_test:.3f}", "green")
+        cprint(f"Log saved to: {log_file_path}", "green")
         cprint("=" * 50, "green")
+
 
         # ---- Video logging ----
         try:
