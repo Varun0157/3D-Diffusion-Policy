@@ -8,6 +8,8 @@ from diffusion_policy_3d.common.sampler import (
     SequenceSampler, get_val_mask, downsample_mask)
 from diffusion_policy_3d.model.common.normalizer import LinearNormalizer, SingleFieldLinearNormalizer
 from diffusion_policy_3d.dataset.base_dataset import BaseDataset
+from termcolor import cprint
+
 
 class DroidDataset(BaseDataset):
     def __init__(self,
@@ -102,3 +104,37 @@ class DroidDataset(BaseDataset):
         # Get the first cube position in the episode (initial position)
         cube_pos = self.replay_buffer['cube_pos'][episode_start_idx].astype(np.float32)
         return cube_pos  # Returns [x, y, z, qx, qy, qz, qw]
+    
+    def get_episode(self, episode_idx: int):
+        """
+        Get the full trajectory for a specific episode
+        
+        Args:
+            episode_idx: Episode index
+            
+        Returns:
+            Dictionary containing full episode data with keys:
+                - 'action': (T, action_dim) - ground truth actions
+                - 'state': (T, state_dim) - robot states
+                - 'point_cloud': (T, num_points, 6) - point clouds
+                - 'cube_pos': (T, 7) - cube positions and orientations
+        """
+        # Step 1: Find episode boundaries in the replay buffer
+        if episode_idx > 0:
+            start_idx = self.replay_buffer.episode_ends[episode_idx - 1]
+        else:
+            start_idx = 0
+        end_idx = self.replay_buffer.episode_ends[episode_idx]
+        
+        # Step 2: Extract the slice of actions for this episode
+        episode_data = {
+            'action': self.replay_buffer['action'][start_idx:end_idx].astype(np.float32), # This gives us array of shape (350, 7) - all actions in this episode
+            'state': self.replay_buffer['state'][start_idx:end_idx].astype(np.float32),
+            'point_cloud': self.replay_buffer['point_cloud'][start_idx:end_idx].astype(np.float32),
+            'cube_pos': self.replay_buffer['cube_pos'][start_idx:end_idx].astype(np.float32),
+        }
+
+        
+
+        return episode_data
+        
