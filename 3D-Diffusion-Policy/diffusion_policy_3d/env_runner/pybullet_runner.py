@@ -47,7 +47,7 @@ class UR5PyBulletRunner(BaseRunner):
         fps=10,
         crf=22,
         tqdm_interval_sec=5.0,
-        use_gui=False,
+        use_gui=True,
         num_points=6000,
         image_size=224,
         use_workspace_crop=True,
@@ -132,6 +132,8 @@ class UR5PyBulletRunner(BaseRunner):
             # Get cube start position from validation dataset if available
             cube_start_pos = None
             cube_start_orn = None
+            gt_actions = None
+            
 
             if dataset is not None:
                 try:
@@ -150,6 +152,15 @@ class UR5PyBulletRunner(BaseRunner):
                             "green",
                         )
 
+                       # Get ground truth actions for this episode
+                        episode_data = dataset.get_episode(val_ep_idx)
+                        gt_actions = episode_data['action']  # Shape: (T, action_dim)
+                        cprint(
+                            f"Shape of episode action data: {gt_actions.shape}",
+                            "green",
+                        )
+
+
                     else:
                         cprint(
                             f"Episode {episode_id}: No more validation episodes, using random position",
@@ -157,7 +168,10 @@ class UR5PyBulletRunner(BaseRunner):
                         )
                         cube_start_pos = None
                         cube_start_orn = None
+                        gt_actions = None
 
+
+                
                 except Exception as e:
                     cprint(
                         f"Episode {episode_id}: Could not load cube position from dataset: {e}",
@@ -197,6 +211,13 @@ class UR5PyBulletRunner(BaseRunner):
 
             reward_sum = 0.0
             done = False
+
+           # Storage for this episode's comparisons
+            episode_gt_grippers = []
+            episode_pred_grippers = []
+            episode_actual_grippers = []
+
+            gt_timestep = 0  
 
             for step_id in range(self.max_steps):
                 # Deep copy the observation to avoid reference issues
@@ -334,12 +355,68 @@ class UR5PyBulletRunner(BaseRunner):
                 if step_id == 0 and episode_id == 0:
                     cprint(f"Final action shape for env.step(): {action.shape}", "cyan")
 
+
+                if gt_actions is not None:
+                    # Get the corresponding GT actions that will be executed
+                    gt_start_idx = gt_timestep
+                    gt_end_idx = min(gt_timestep + self.n_action_steps, len(gt_actions))
+                    
+                    if gt_start_idx < len(gt_actions):
+                        gt_actions_to_execute = gt_actions[gt_start_idx:gt_end_idx]  # Shape: (n_action_steps, action_dim)
+                        pred_actions_to_execute = action[:len(gt_actions_to_execute)]  # Match length
+                        
+                        # Extract gripper values (index 6)
+                        gt_grippers = gt_actions_to_execute[:, 6]
+                        pred_grippers = pred_actions_to_execute[:, 6]
+                        
+                        # Print comparison for ALL actions that will be executed
+                        cprint(f"\n{'='*80}", "cyan")
+                        cprint(f"Episode {episode_id}, Policy Step {step_id} (GT Timesteps {gt_start_idx} to {gt_end_idx-1}):", "cyan")
+                        cprint(f"Executing {len(gt_grippers)} actions:", "cyan")
+                        
+                        for i in range(len(gt_grippers)):
+                            actual_gt_timestep = gt_start_idx + i
+                            cprint(f"  [{i}] GT Timestep {actual_gt_timestep}:", "white")
+                            cprint(f"      GT Gripper:   {gt_grippers[i]:.6f}", "green")
+                            cprint(f"      Pred Gripper: {pred_grippers[i]:.6f}", "yellow")
+                            cprint(f"      Difference:   {abs(gt_grippers[i] - pred_grippers[i]):.6f}", "red")
+                        
+                        # Store for episode summary
+                        episode_gt_grippers.extend(gt_grippers.tolist())
+                        episode_pred_grippers.extend(pred_grippers.tolist())
+                        
+                        cprint(f"{'='*80}\n", "cyan")
+                    
+                    # Update GT timestep counter
+                    gt_timestep += self.n_action_steps
+
+
                 obs, reward, done, info = self.env_test.step(action)
+                
+                actual_gripper = self.env_test.env.env.robot.get_joint_positions()[6]
+                episode_actual_grippers.append(actual_gripper)
+
                 reward_sum += reward
                 done = np.all(done)
 
                 if done:
                     break
+            
+            # Episode summary
+            if len(episode_gt_grippers) > 0 and len(episode_pred_grippers) > 0:
+                gt_arr = np.array(episode_gt_grippers)
+                pred_arr = np.array(episode_pred_grippers)
+                
+                mae_gt_pred = np.mean(np.abs(gt_arr - pred_arr))
+                
+                cprint(f"\n{'='*80}", "magenta")
+                cprint(f"Episode {episode_id} Gripper Summary:", "magenta")
+                cprint(f"  Total actions compared: {len(gt_arr)}", "magenta")
+                cprint(f"  MAE (GT vs Pred):       {mae_gt_pred:.6f}", "magenta")
+                cprint(f"  GT Range:    [{gt_arr.min():.6f}, {gt_arr.max():.6f}]", "magenta")
+                cprint(f"  Pred Range:  [{pred_arr.min():.6f}, {pred_arr.max():.6f}]", "magenta")
+                cprint(f"{'='*80}\n", "magenta")
+
 
             all_returns_test.append(reward_sum)
             all_success_rates_test.append(self.env_test.env.is_success())
