@@ -16,7 +16,7 @@ shape_meta: &shape_meta # acceptable types: rgb, low_dim
 env_runner:
   _target_: diffusion_policy_3d.env_runner.pybullet_runner.UR5PyBulletRunner
   n_train: 20
-  max_steps: 400
+  max_steps: 370
   n_obs_steps: ${n_obs_steps}
   n_action_steps: ${n_action_steps}
   fps: 10
