@@ -307,14 +307,26 @@ class UR5Robotiq85:
 
     def set_gripper(self, gripper_angle):
         """Set gripper angle directly"""
+        # p.setJointMotorControl2(
+        #     self.id,
+        #     self.mimic_parent_id,
+        #     p.POSITION_CONTROL,
+        #     targetPosition=gripper_angle,
+        #     force=100,
+        # )
         p.setJointMotorControl2(
-            self.id,
-            self.mimic_parent_id,
-            p.POSITION_CONTROL,
+            self.id, 
+            self.mimic_parent_id, 
+            p.POSITION_CONTROL, 
             targetPosition=gripper_angle,
-            force=100,
+            force=1500,
+            maxVelocity=1.5
         )
 
+        for _ in range(50):
+            p.stepSimulation()
+
+            
     def set_joint_positions(self, joint_positions):
         """
         Set joint positions using high-gain position control
