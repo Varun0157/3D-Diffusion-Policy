@@ -152,8 +152,8 @@ class UR5Robotiq85:
 
     def load(self):
         self.id = p.loadURDF(
-            "/home/cross-emb/3D-Diffusion-Policy/3D-Diffusion-Policy/diffusion_policy_3d/env/pybullet/urdf/ur5_robotiq_85.urdf",
-            # "/home/aniruth/Desktop/RRC/3D-Diffusion-Policy/3D-Diffusion-Policy/diffusion_policy_3d/env/pybullet/urdf/ur5_robotiq_85.urdf" ,
+            # "/home/cross-emb/3D-Diffusion-Policy/3D-Diffusion-Policy/diffusion_policy_3d/env/pybullet/urdf/ur5_robotiq_85.urdf",
+            "/home/aniruth/Desktop/RRC/3D-Diffusion-Policy/3D-Diffusion-Policy/diffusion_policy_3d/env/pybullet/urdf/ur5_robotiq_85.urdf" ,
             self.base_pos,
             self.base_ori,
             useFixedBase=True,
@@ -219,8 +219,7 @@ class UR5Robotiq85:
         ]
 
     def __setup_mimic_joints__(self):
-        import math
-
+        """Setup mimic joints for Robotiq gripper"""
         mimic_parent_name = "finger_joint"
         mimic_children_names = {
             "right_outer_knuckle_joint": 1,
@@ -229,16 +228,20 @@ class UR5Robotiq85:
             "left_inner_finger_joint": -1,
             "right_inner_finger_joint": -1,
         }
-
+        
+        # Find parent joint ID
         self.mimic_parent_id = [
             joint.id for joint in self.joints if joint.name == mimic_parent_name
         ][0]
+        
+        # Store child joint info
         self.mimic_child_multiplier = {
             joint.id: mimic_children_names[joint.name]
             for joint in self.joints
             if joint.name in mimic_children_names
         }
-
+        
+        # Create constraints with MUCH stronger force
         for joint_id, multiplier in self.mimic_child_multiplier.items():
             c = p.createConstraint(
                 self.id,
@@ -250,8 +253,10 @@ class UR5Robotiq85:
                 parentFramePosition=[0, 0, 0],
                 childFramePosition=[0, 0, 0],
             )
-            p.changeConstraint(c, gearRatio=-multiplier, maxForce=100, erp=1)
+            # CRITICAL: High maxForce and erp=1 for stiff constraints
+            p.changeConstraint(c, gearRatio=-multiplier, maxForce=100000, erp=1)
 
+            
     def get_robot_state(self):
         """Get complete robot state: end-effector pose + joint angles"""
         eef_state = p.getLinkState(self.id, self.eef_id)
@@ -360,7 +365,7 @@ class UR5PickPlaceEnv(gym.Env):
 
     def __init__(
         self,
-        use_gui=False,
+        use_gui=True,
         num_points=6000,
         image_size=224,
         use_workspace_crop=True,
@@ -565,15 +570,15 @@ class UR5PickPlaceEnv(gym.Env):
 
         self.robot.set_arm_joints(target_arm)
 
-        print(f"Target griper pos to reach : {target_gripper}")
+        # print(f"Target griper pos to reach : {target_gripper}")
         self.robot.set_gripper(target_gripper)
 
-        for _ in range(500):
+        for _ in range(1000):
             p.stepSimulation()
 
-        time.sleep(0.15)
+        time.sleep(0.55)
 
-        print(f"Actual griper pos reached : {self.robot.get_joint_positions()[6]}\n\n")
+        # print(f"Actual griper pos reached : {self.robot.get_joint_positions()[6]}\n\n")
 
         obs = self._get_obs()
 
