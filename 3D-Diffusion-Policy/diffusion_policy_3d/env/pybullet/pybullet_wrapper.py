@@ -150,6 +150,11 @@ class UR5Robotiq85:
         self.gripper_range = [0, 0.085]
         self.max_velocity = 3
 
+        # CRITICAL: Gripper normalization limit (same as data collection)
+        self.GRIPPER_NORM_LIMIT = 0.2
+        self.current_gripper_velocity = 0.0  # Track current velocity command
+
+
     def load(self):
         self.id = p.loadURDF(
             # "/home/cross-emb/3D-Diffusion-Policy/3D-Diffusion-Policy/diffusion_policy_3d/env/pybullet/urdf/ur5_robotiq_85.urdf",
@@ -219,7 +224,7 @@ class UR5Robotiq85:
         ]
 
     def __setup_mimic_joints__(self):
-        """Setup mimic joints for Robotiq gripper"""
+        """Setup mimic joints for Robotiq gripper with STRONG constraints"""
         mimic_parent_name = "finger_joint"
         mimic_children_names = {
             "right_outer_knuckle_joint": 1,
@@ -241,7 +246,7 @@ class UR5Robotiq85:
             if joint.name in mimic_children_names
         }
         
-        # Create constraints with MUCH stronger force
+        # Create constraints with STRONG force (same as data collection)
         for joint_id, multiplier in self.mimic_child_multiplier.items():
             c = p.createConstraint(
                 self.id,
@@ -254,11 +259,14 @@ class UR5Robotiq85:
                 childFramePosition=[0, 0, 0],
             )
             # CRITICAL: High maxForce and erp=1 for stiff constraints
-            p.changeConstraint(c, gearRatio=-multiplier, maxForce=100000, erp=1)
+            p.changeConstraint(c, gearRatio=-multiplier, maxForce=100, erp=1)
 
             
     def get_robot_state(self):
-        """Get complete robot state: end-effector pose + joint angles"""
+        """
+        Get complete robot state with NORMALIZED gripper value
+        Returns: [eef_pos(3), eef_orn_euler(3), joint_angles(6), gripper_normalized(1)]
+        """
         eef_state = p.getLinkState(self.id, self.eef_id)
         eef_pos = np.array(eef_state[0])
         eef_orn_quat = np.array(eef_state[1])
@@ -269,24 +277,38 @@ class UR5Robotiq85:
             joint_state = p.getJointState(self.id, joint_id)
             joint_states.append(joint_state[0])
 
-        gripper_state = p.getJointState(self.id, self.mimic_parent_id)
-        gripper_angle = gripper_state[0]
+        # Get raw gripper angle and normalize (same as data collection)
+        raw_angle = p.getJointState(self.id, self.mimic_parent_id)[0]
+        
+        # Noise suppression
+        if abs(raw_angle) < 1e-3:
+            raw_angle = 0.0
+        
+        # Normalize to [0, 1] using GRIPPER_NORM_LIMIT
+        gripper_normalized = np.clip(raw_angle / self.GRIPPER_NORM_LIMIT, 0.0, 1.0)
 
-        state = np.concatenate([eef_pos, eef_orn_euler, joint_states, [gripper_angle]])
-
+        state = np.concatenate([eef_pos, eef_orn_euler, joint_states, [gripper_normalized]])
         return state
+    
+
 
     def get_joint_positions(self):
-        """Get current joint positions (6 arm joints + 1 gripper)"""
+        """Get current joint positions (6 arm joints + 1 NORMALIZED gripper)"""
         joint_positions = []
         for joint_id in self.arm_controllable_joints:
             joint_state = p.getJointState(self.id, joint_id)
             joint_positions.append(joint_state[0])
 
-        gripper_state = p.getJointState(self.id, self.mimic_parent_id)
-        joint_positions.append(gripper_state[0])
+        # Get normalized gripper value
+        raw_angle = p.getJointState(self.id, self.mimic_parent_id)[0]
+        if abs(raw_angle) < 1e-3:
+
+            raw_angle = 0.0
+        gripper_normalized = np.clip(raw_angle / self.GRIPPER_NORM_LIMIT, 0.0, 1.0)
+        joint_positions.append(gripper_normalized)
 
         return np.array(joint_positions)
+
 
     def get_joint_limits(self):
         """Get joint limits for arm joints and gripper"""
@@ -305,58 +327,64 @@ class UR5Robotiq85:
                 maxVelocity=self.max_velocity,
             )
 
-    def set_gripper(self, gripper_angle):
-        """Set gripper angle directly"""
-        # p.setJointMotorControl2(
-        #     self.id,
-        #     self.mimic_parent_id,
-        #     p.POSITION_CONTROL,
-        #     targetPosition=gripper_angle,
-        #     force=100,
-        # )
+    def move_gripper(self, velocity_command):
+        """
+        Velocity-based gripper control (same as data collection)
+        
+        Args:
+            velocity_command: Discrete control input
+                -1.0: Open gripper (executed as -0.25 for safety)
+                 0.0: Hold current state
+                 1.0: Close gripper
+        """
+        # Store the velocity command
+        self.current_gripper_velocity = velocity_command
+        
+        # Map discrete command to actual velocity
+        # CRITICAL: Match data collection behavior
+        if velocity_command == -1.0:
+            cprint("Gripper received OPEN command." , "green")
+            actual_velocity = -0.25 * 20.0  # Open slowly
+
+        elif velocity_command == 0.0:
+            cprint("Gripper received HOLD command." , "yellow")
+            actual_velocity = 0.0  # Hold
+
+        elif velocity_command == 1.0:
+            cprint("Gripper received CLOSE command." , "green")
+            actual_velocity = 1.0 * 20.0  # Close
+
+        else:
+            # Continuous value - scale it
+            cprint("Warning: Using continuous gripper velocity command." , "red")
+            actual_velocity = velocity_command * 20.0
+        
         p.setJointMotorControl2(
             self.id, 
             self.mimic_parent_id, 
-            p.POSITION_CONTROL, 
-            targetPosition=gripper_angle,
-            force=1500,
-            maxVelocity=1.5
+            p.VELOCITY_CONTROL,
+            targetVelocity=actual_velocity,
+            force=100  # High force for reliable movement
         )
 
-        for _ in range(50):
-            p.stepSimulation()
 
             
     def set_joint_positions(self, joint_positions):
         """
-        Set joint positions using high-gain position control
+        Set all joint positions (6 arm + 1 gripper velocity command)
+        
+        Args:
+            joint_positions: [arm_joints(6), gripper_velocity_cmd(1)]
         """
-        for i, joint_id in enumerate(self.arm_controllable_joints):
-            p.setJointMotorControl2(
-                self.id,
-                joint_id,
-                p.POSITION_CONTROL,
-                targetPosition=joint_positions[i],
-                force=500,
-                maxVelocity=10,
-            )
-
-        if len(joint_positions) > self.arm_num_dofs:
-            gripper_angle = joint_positions[self.arm_num_dofs]
-            p.setJointMotorControl2(
-                self.id,
-                self.mimic_parent_id,
-                p.POSITION_CONTROL,
-                targetPosition=gripper_angle,
-                force=200,  # ← Make sure this is here too
-                maxVelocity=1.0,
-            )
-
-    def set_joint_positions(self, joint_positions):
-        """Set all joint positions (6 arm + 1 gripper)"""
+        # Set arm joints
         self.set_arm_joints(joint_positions[:6])
+        
+        # Set gripper using velocity command
         if len(joint_positions) > 6:
-            self.set_gripper(joint_positions[6])
+            gripper_cmd = joint_positions[6]
+            self.move_gripper(gripper_cmd)
+
+
 
     def get_eef_position(self):
         """Get end-effector 3D position"""
@@ -366,12 +394,14 @@ class UR5Robotiq85:
 
 class UR5PickPlaceEnv(gym.Env):
     """
-    PyBullet UR5 Pick and Place Environment with GT Trajectory Visualization
-    This environment follows the Gym interface and is compatible with
-    MultiStepWrapper for multi-step action execution.
-
-    Actions are interpreted as DELTAS in joint angles (6 arm joints + 1 gripper).
+    PyBullet UR5 Pick and Place Environment with VELOCITY-BASED gripper control
+    
+    Key changes from original:
+    1. Gripper state is normalized to [0, 1]
+    2. Gripper actions are discrete velocity commands: {-1, 0, 1}
+    3. States returned include normalized gripper value
     """
+
 
     metadata = {"render.modes": ["rgb_array"], "video.frames_per_second": 10}
 
@@ -456,21 +486,6 @@ class UR5PickPlaceEnv(gym.Env):
 
         self.is_success_flag = False
 
-    # def _toggle_table_visibility(self, visible):
-    #     """
-    #     Toggle visibility of table and plane for point cloud capture.
-    #
-    #     Args:
-    #         visible: If True, show table/plane. If False, make them transparent.
-    #     """
-    #     if visible:
-    #         # Make table and plane visible
-    #         p.changeVisualShape(self.table_id, -1, rgbaColor=[1, 1, 1, 1])
-    #         # p.changeVisualShape(self.plane_id, -1, rgbaColor=[1, 1, 1, 1])
-    #     else:
-    #         # Make table and plane transparent (invisible in camera)
-    #         p.changeVisualShape(self.table_id, -1, rgbaColor=[1, 1, 1, 0])
-    #         # p.changeVisualShape(self.plane_id, -1, rgbaColor=[1, 1, 1, 0])
 
     def reset(self, cube_start_pos=None, cube_start_orn=None):
         """
@@ -490,12 +505,6 @@ class UR5PickPlaceEnv(gym.Env):
         if self.cube_id is not None:
             p.removeBody(self.cube_id)
 
-        # # Reset robot to rest pose
-        # target_joint_positions = [0, -1.57, 1.57, -1.5, -1.57, 0.0]
-        # for i, joint_id in enumerate(self.robot.arm_controllable_joints):
-        #     p.setJointMotorControl2(
-        #         self.robot.id, joint_id, p.POSITION_CONTROL, target_joint_positions[i]
-        #     )
 
         # Move to rest pose
         rest_pose = [0, -1.57, 1.57, -1.5, -1.57, 0.0]
@@ -505,19 +514,30 @@ class UR5PickPlaceEnv(gym.Env):
             )
 
         p.setJointMotorControl2(
-            self.robot.id,
-            self.robot.mimic_parent_id,
-            p.POSITION_CONTROL,
-            targetPosition=0.0,
-            force=200,
+            self.robot.id, 
+            self.robot.mimic_parent_id, 
+            p.POSITION_CONTROL, 
+            targetPosition=0.000,
+            force=1500,
+            maxVelocity=1.5
         )
 
+        # print(f"Gripper reset to: {actual_angle:.4f}\n")
+        self.robot.move_gripper(0.0)
+    
+        for _ in range(5000):
+            p.stepSimulation()
+
+        
         # Stabilize
         print("\nStabilizing robot at rest pose...")
         for _ in range(1000):
             p.stepSimulation()
 
-        print("\n\nStarting position of robot : ", self.robot.get_joint_positions())
+        actual_angle = p.getJointState(self.robot.id, self.robot.mimic_parent_id)[0]
+
+        print("Reset complete. Gripper position after reset: {:.4f}\n".format(actual_angle))
+
         # Use provided cube position or generate random one
         if cube_start_pos is not None:
             self.cube_start_pos = cube_start_pos
@@ -571,26 +591,39 @@ class UR5PickPlaceEnv(gym.Env):
         else:
             raise ValueError(f"Action must be 7D or 13D, got {len(action)}D")
 
-        # print(joint_deltas)
         arm_deltas = joint_deltas[:6]
-        gripper_delta = joint_deltas[6]
+        gripper_velocity_cmd = joint_deltas[6]
+        
+        # Discretize gripper command to {-1, 0, 1}
 
+        print("Received gripper velocity command: ", gripper_velocity_cmd)
+        if gripper_velocity_cmd < -0.33: # anything less than -0.33 is open
+            gripper_cmd_discrete = -1.0
+        elif gripper_velocity_cmd > 0.33: # anything greater than 0.33 is close
+            gripper_cmd_discrete = 1.0
+        else: # in between is hold
+            gripper_cmd_discrete = 0.0
+
+
+        print("Discretized gripper command to: ", gripper_cmd_discrete)
+
+        # Get current state (with normalized gripper)
         current_joint_pos = self.robot.get_joint_positions()
 
+        # Update arm joints
         target_arm = current_joint_pos[:6] + arm_deltas
-        target_gripper = current_joint_pos[6] + gripper_delta
-
         self.robot.set_arm_joints(target_arm)
 
-        # print(f"Target griper pos to reach : {target_gripper}")
-        self.robot.set_gripper(target_gripper)
+        # Update gripper using velocity command
+        self.robot.move_gripper(gripper_cmd_discrete)
+
 
         for _ in range(1000):
             p.stepSimulation()
 
         time.sleep(0.55)
 
-        # print(f"Actual griper pos reached : {self.robot.get_joint_positions()[6]}\n\n")
+        print(f"Actual griper pos reached : {self.robot.get_joint_positions()[6]}\n\n")
 
         obs = self._get_obs()
 
