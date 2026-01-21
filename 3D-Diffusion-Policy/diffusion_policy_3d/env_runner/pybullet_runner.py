@@ -24,6 +24,7 @@ import wandb
 import os
 from datetime import datetime
 
+
 def save_pointcloud(pc, fname="debug_pc.ply"):
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(pc.astype(np.float64))
@@ -31,9 +32,32 @@ def save_pointcloud(pc, fname="debug_pc.ply"):
     print(f"[PCD] saved to {fname}")
 
 
+def discretize_gripper_action(gripper_value):
+    """
+    Discretize continuous gripper action to {-1, 0, 1}
+    
+    Args:
+        gripper_value: Continuous value from policy
+    
+    Returns:
+        Discrete command: -1.0 (open), 0.0 (hold), or 1.0 (close)
+    """
+    if gripper_value < -0.33:
+        return -1.0
+    elif gripper_value > 0.33:
+        return 1.0
+    else:
+        return 0.0
+
+
 class UR5PyBulletRunner(BaseRunner):
     """
-    Extended runner that uses validation dataset cube positions for evaluation
+    Extended runner with DISCRETE GRIPPER ACTIONS
+    
+    Key changes:
+    1. Gripper actions are discretized to {-1, 0, 1} before execution
+    2. GT actions are already discrete from dataset
+    3. Comparison is done on discrete values
     """
 
     def __init__(
@@ -93,7 +117,7 @@ class UR5PyBulletRunner(BaseRunner):
     def run(self, policy: BasePolicy, dataset=None):
         """
         Run evaluation using validation dataset cube positions
-
+        
         Args:
             policy: Policy to evaluate
             dataset: Validation dataset to get cube positions from
@@ -115,7 +139,6 @@ class UR5PyBulletRunner(BaseRunner):
         log_file_path = os.path.join(log_dir, f"gripper_gt_vs_pred_{timestamp}.txt")
         
         cprint(f"Logging to: {log_file_path}", "cyan")
-
 
         cprint("=" * 50, "cyan")
         cprint(
@@ -143,9 +166,6 @@ class UR5PyBulletRunner(BaseRunner):
             cube_start_pos = None
             cube_start_orn = None
             gt_actions = None
-            
-
-
 
             if dataset is not None:
                 try:
@@ -164,14 +184,13 @@ class UR5PyBulletRunner(BaseRunner):
                             "green",
                         )
 
-                       # Get ground truth actions for this episode
+                        # Get ground truth actions for this episode
                         episode_data = dataset.get_episode(val_ep_idx)
                         gt_actions = episode_data['action']  # Shape: (T, action_dim)
                         cprint(
                             f"Shape of episode action data: {gt_actions.shape}",
                             "green",
                         )
-
 
                     else:
                         cprint(
@@ -182,8 +201,6 @@ class UR5PyBulletRunner(BaseRunner):
                         cube_start_orn = None
                         gt_actions = None
 
-
-                
                 except Exception as e:
                     cprint(
                         f"Episode {episode_id}: Could not load cube position from dataset: {e}",
@@ -210,13 +227,9 @@ class UR5PyBulletRunner(BaseRunner):
 
             # Reset environment with specified or random cube position
             if cube_start_pos is not None:
-                # Temporarily store the cube position in the base environment
                 self.env_test.env.env.cube_start_pos = cube_start_pos
                 self.env_test.env.env.cube_start_orn = cube_start_orn
                 obs = self.env_test.reset(cube_start_pos=cube_start_pos, cube_start_orn=cube_start_orn)
-                # obs = self.env_test.env.env.reset(
-                    # cube_start_pos=cube_start_pos, cube_start_orn=cube_start_orn
-                # )
             else:
                 cprint(
                     f"Episode {episode_id}: Using random cube position TO RESET",
@@ -239,9 +252,10 @@ class UR5PyBulletRunner(BaseRunner):
             reward_sum = 0.0
             done = False
 
-           # Storage for this episode's comparisons
+            # Storage for this episode's comparisons
             episode_gt_grippers = []
             episode_pred_grippers = []
+            episode_pred_grippers_discrete = []
             episode_actual_grippers = []
 
             gt_timestep = 0  
@@ -297,12 +311,8 @@ class UR5PyBulletRunner(BaseRunner):
                         tensor = obs_dict[key]
 
                         # Handle stacked vs single observations
-                        # MultiStepWrapper should give us (n_obs_steps, ...) but might not always
-
                         if key == "point_cloud":
                             if tensor.ndim == 2:
-                                # Single frame: (num_points, 3) - shouldn't happen with wrapper
-                                # Repeat to create history and add batch dim
                                 cprint(
                                     f"WARNING: point_cloud not stacked, repeating {self.n_obs_steps} times",
                                     "yellow",
@@ -310,28 +320,19 @@ class UR5PyBulletRunner(BaseRunner):
                                 tensor = tensor.unsqueeze(0).repeat(
                                     self.n_obs_steps, 1, 1
                                 )
-                            # Now tensor should be (n_obs_steps, num_points, 3)
-                            policy_obs[key] = tensor.unsqueeze(
-                                0
-                            )  # (1, n_obs_steps, num_points, 3)
+                            policy_obs[key] = tensor.unsqueeze(0)
 
                         elif key == "agent_pos":
                             if tensor.ndim == 1:
-                                # Single frame: (action_dim,) - shouldn't happen with wrapper
-                                # Repeat to create history and add batch dim
                                 cprint(
                                     f"WARNING: agent_pos not stacked, repeating {self.n_obs_steps} times",
                                     "yellow",
                                 )
                                 tensor = tensor.unsqueeze(0).repeat(self.n_obs_steps, 1)
-                            # Now tensor should be (n_obs_steps, action_dim)
-                            policy_obs[key] = tensor.unsqueeze(
-                                0
-                            )  # (1, n_obs_steps, action_dim)
+                            policy_obs[key] = tensor.unsqueeze(0)
 
                         elif key == "image":
                             if tensor.ndim == 3:
-                                # Single frame: (C, H, W) - shouldn't happen with wrapper
                                 cprint(
                                     f"WARNING: image not stacked, repeating {self.n_obs_steps} times",
                                     "yellow",
@@ -339,12 +340,8 @@ class UR5PyBulletRunner(BaseRunner):
                                 tensor = tensor.unsqueeze(0).repeat(
                                     self.n_obs_steps, 1, 1, 1
                                 )
-                            # Now tensor should be (n_obs_steps, C, H, W)
-                            policy_obs[key] = tensor.unsqueeze(
-                                0
-                            )  # (1, n_obs_steps, C, H, W)
+                            policy_obs[key] = tensor.unsqueeze(0)
                         else:
-                            # Generic handling: add batch dimension
                             policy_obs[key] = tensor.unsqueeze(0)
                     else:
                         cprint(
@@ -372,16 +369,21 @@ class UR5PyBulletRunner(BaseRunner):
 
                 # MultiStepWrapper expects (n_action_steps, action_dim)
                 if action.ndim == 3:
-                    action = action.squeeze(
-                        0
-                    )  # Remove batch dim: (n_action_steps, action_dim)
+                    action = action.squeeze(0)
                 elif action.ndim == 2 and action.shape[0] == 1:
-                    action = action.squeeze(0)  # Remove batch dim if present
+                    action = action.squeeze(0)
 
                 # Final check
                 if step_id == 0 and episode_id == 0:
                     cprint(f"Final action shape for env.step(): {action.shape}", "cyan")
 
+                # CRITICAL: Discretize gripper actions before execution
+                action_discrete = action.copy()
+                for i in range(len(action_discrete)):
+                    gripper_idx = 6 if action_discrete.shape[1] == 7 else 12
+                    gripper_continuous = action_discrete[i, gripper_idx]
+                    gripper_discrete = discretize_gripper_action(gripper_continuous)
+                    action_discrete[i, gripper_idx] = gripper_discrete
 
                 if gt_actions is not None:
                     # Get the corresponding GT actions that will be executed
@@ -389,12 +391,15 @@ class UR5PyBulletRunner(BaseRunner):
                     gt_end_idx = min(gt_timestep + self.n_action_steps, len(gt_actions))
                     
                     if gt_start_idx < len(gt_actions):
-                        gt_actions_to_execute = gt_actions[gt_start_idx:gt_end_idx]  # Shape: (n_action_steps, action_dim)
-                        pred_actions_to_execute = action[:len(gt_actions_to_execute)]  # Match length
+                        gt_actions_to_execute = gt_actions[gt_start_idx:gt_end_idx]
+                        pred_actions_continuous = action[:len(gt_actions_to_execute)]
+                        pred_actions_discrete = action_discrete[:len(gt_actions_to_execute)]
                         
-                        # Extract gripper values (index 6)
-                        gt_grippers = gt_actions_to_execute[:, 6]
-                        pred_grippers = pred_actions_to_execute[:, 6]
+                        # Extract gripper values (index 6 or 12)
+                        gripper_idx = 6 if gt_actions.shape[1] == 7 else 12
+                        gt_grippers = gt_actions_to_execute[:, gripper_idx]
+                        pred_grippers_continuous = pred_actions_continuous[:, gripper_idx]
+                        pred_grippers_discrete = pred_actions_discrete[:, gripper_idx]
                         
                         # Print comparison for ALL actions that will be executed
                         cprint(f"\n{'='*80}", "cyan")
@@ -404,29 +409,33 @@ class UR5PyBulletRunner(BaseRunner):
                         for i in range(len(gt_grippers)):
                             actual_gt_timestep = gt_start_idx + i
                             cprint(f"  [{i}] GT Timestep {actual_gt_timestep}:", "white")
-                            cprint(f"      GT Gripper:   {gt_grippers[i]:.6f}", "green")
-                            cprint(f"      Pred Gripper: {pred_grippers[i]:.6f}", "yellow")
-                            cprint(f"      Difference:   {abs(gt_grippers[i] - pred_grippers[i]):.6f}", "red")
+                            cprint(f"      GT Gripper:        {gt_grippers[i]:.6f}", "green")
+                            cprint(f"      Pred Continuous:   {pred_grippers_continuous[i]:.6f}", "yellow")
+                            cprint(f"      Pred Discrete:     {pred_grippers_discrete[i]:.6f}", "magenta")
+                            cprint(f"      Diff (GT-Disc):    {abs(gt_grippers[i] - pred_grippers_discrete[i]):.6f}", "red")
                         
                             with open(log_file_path, 'a') as log_file:
                                 log_file.write(f"  Action [{i}] - GT Timestep {actual_gt_timestep}:\n")
-                                log_file.write(f"    GT Gripper:   {gt_grippers[i]:.6f}\n")
-                                log_file.write(f"    Pred Gripper: {pred_grippers[i]:.6f}\n")
-                                log_file.write(f"    Difference:   {abs(gt_grippers[i] - pred_grippers[i]):.6f}\n")
+                                log_file.write(f"    GT Gripper:        {gt_grippers[i]:.6f}\n")
+                                log_file.write(f"    Pred Continuous:   {pred_grippers_continuous[i]:.6f}\n")
+                                log_file.write(f"    Pred Discrete:     {pred_grippers_discrete[i]:.6f}\n")
+                                log_file.write(f"    Diff (GT-Disc):    {abs(gt_grippers[i] - pred_grippers_discrete[i]):.6f}\n")
                                 log_file.write("\n")
                             
                         # Store for episode summary
                         episode_gt_grippers.extend(gt_grippers.tolist())
-                        episode_pred_grippers.extend(pred_grippers.tolist())
+                        episode_pred_grippers.extend(pred_grippers_continuous.tolist())
+                        episode_pred_grippers_discrete.extend(pred_grippers_discrete.tolist())
                         
                         cprint(f"{'='*80}\n", "cyan")
                     
                     # Update GT timestep counter
                     gt_timestep += self.n_action_steps
 
-
-                obs, reward, done, info = self.env_test.step(action)
+                # Execute DISCRETIZED actions
+                obs, reward, done, info = self.env_test.step(action_discrete)
                 
+                # Get actual gripper state (normalized)
                 actual_gripper = self.env_test.env.env.robot.get_joint_positions()[6]
                 episode_actual_grippers.append(actual_gripper)
 
@@ -436,19 +445,24 @@ class UR5PyBulletRunner(BaseRunner):
                 if done:
                     break
 
-            if len(episode_gt_grippers) > 0 and len(episode_pred_grippers) > 0:
+            # Episode summary
+            if len(episode_gt_grippers) > 0 and len(episode_pred_grippers_discrete) > 0:
                 gt_arr = np.array(episode_gt_grippers)
-                pred_arr = np.array(episode_pred_grippers)
+                pred_continuous_arr = np.array(episode_pred_grippers)
+                pred_discrete_arr = np.array(episode_pred_grippers_discrete)
                 
-                mae_gt_pred = np.mean(np.abs(gt_arr - pred_arr))
+                mae_gt_continuous = np.mean(np.abs(gt_arr - pred_continuous_arr))
+                mae_gt_discrete = np.mean(np.abs(gt_arr - pred_discrete_arr))
                 
                 # Console output
                 cprint(f"\n{'='*80}", "magenta")
                 cprint(f"Episode {episode_id} Gripper Summary:", "magenta")
                 cprint(f"  Total actions compared: {len(gt_arr)}", "magenta")
-                cprint(f"  MAE (GT vs Pred):       {mae_gt_pred:.6f}", "magenta")
-                cprint(f"  GT Range:    [{gt_arr.min():.6f}, {gt_arr.max():.6f}]", "magenta")
-                cprint(f"  Pred Range:  [{pred_arr.min():.6f}, {pred_arr.max():.6f}]", "magenta")
+                cprint(f"  MAE (GT vs Pred Continuous): {mae_gt_continuous:.6f}", "magenta")
+                cprint(f"  MAE (GT vs Pred Discrete):   {mae_gt_discrete:.6f}", "magenta")
+                cprint(f"  GT Range:        [{gt_arr.min():.6f}, {gt_arr.max():.6f}]", "magenta")
+                cprint(f"  Pred Cont Range: [{pred_continuous_arr.min():.6f}, {pred_continuous_arr.max():.6f}]", "magenta")
+                cprint(f"  Pred Disc Range: [{pred_discrete_arr.min():.6f}, {pred_discrete_arr.max():.6f}]", "magenta")
                 cprint(f"{'='*80}\n", "magenta")
                 
                 # File output
@@ -457,11 +471,13 @@ class UR5PyBulletRunner(BaseRunner):
                     log_file.write(f"EPISODE {episode_id} SUMMARY\n")
                     log_file.write("="*80 + "\n")
                     log_file.write(f"Total actions compared: {len(gt_arr)}\n")
-                    log_file.write(f"MAE (GT vs Pred):       {mae_gt_pred:.6f}\n")
-                    log_file.write(f"GT Range:    [{gt_arr.min():.6f}, {gt_arr.max():.6f}]\n")
-                    log_file.write(f"Pred Range:  [{pred_arr.min():.6f}, {pred_arr.max():.6f}]\n")
-                    log_file.write(f"Reward:      {reward_sum:.2f}\n")
-                    log_file.write(f"Success:     {self.env_test.env.is_success()}\n")
+                    log_file.write(f"MAE (GT vs Pred Continuous): {mae_gt_continuous:.6f}\n")
+                    log_file.write(f"MAE (GT vs Pred Discrete):   {mae_gt_discrete:.6f}\n")
+                    log_file.write(f"GT Range:        [{gt_arr.min():.6f}, {gt_arr.max():.6f}]\n")
+                    log_file.write(f"Pred Cont Range: [{pred_continuous_arr.min():.6f}, {pred_continuous_arr.max():.6f}]\n")
+                    log_file.write(f"Pred Disc Range: [{pred_discrete_arr.min():.6f}, {pred_discrete_arr.max():.6f}]\n")
+                    log_file.write(f"Reward:          {reward_sum:.2f}\n")
+                    log_file.write(f"Success:         {self.env_test.env.is_success()}\n")
                     log_file.write("="*80 + "\n\n\n")
 
             all_returns_test.append(reward_sum)
@@ -500,7 +516,6 @@ class UR5PyBulletRunner(BaseRunner):
         cprint(f"Test - Mean SR: {SR_mean_test:.3f}, Mean Return: {returns_mean_test:.3f}", "green")
         cprint(f"Log saved to: {log_file_path}", "green")
         cprint("=" * 50, "green")
-
 
         # ---- Video logging ----
         try:
