@@ -157,8 +157,8 @@ class UR5Robotiq85:
 
     def load(self):
         self.id = p.loadURDF(
-            # "/home/cross-emb/3D-Diffusion-Policy/3D-Diffusion-Policy/diffusion_policy_3d/env/pybullet/urdf/ur5_robotiq_85.urdf",
-            "/home/aniruth/Desktop/RRC/3D-Diffusion-Policy/3D-Diffusion-Policy/diffusion_policy_3d/env/pybullet/urdf/ur5_robotiq_85.urdf" ,
+            "/home/cross-emb/3D-Diffusion-Policy/3D-Diffusion-Policy/diffusion_policy_3d/env/pybullet/urdf/ur5_robotiq_85.urdf",
+            # "/home/aniruth/Desktop/RRC/3D-Diffusion-Policy/3D-Diffusion-Policy/diffusion_policy_3d/env/pybullet/urdf/ur5_robotiq_85.urdf" ,
             self.base_pos,
             self.base_ori,
             useFixedBase=True,
@@ -407,7 +407,7 @@ class UR5PickPlaceEnv(gym.Env):
 
     def __init__(
         self,
-        use_gui=True,
+        use_gui=False,
         num_points=6000,
         image_size=224,
         use_workspace_crop=True,
