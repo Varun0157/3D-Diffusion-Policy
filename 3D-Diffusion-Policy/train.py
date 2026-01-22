@@ -34,6 +34,23 @@ from diffusion_policy_3d.model.common.lr_scheduler import get_scheduler
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
 
+def discretize_gripper_action_torch(gripper_value):
+    """
+    Discretize continuous gripper action to {-1, 0, 1} using torch operations
+    
+    Args:
+        gripper_value: Tensor of continuous values from policy
+    
+    Returns:
+        Tensor of discrete commands: -1.0 (open), 0.0 (hold), or 1.0 (close)
+    """
+    gripper_discrete = torch.zeros_like(gripper_value)
+    gripper_discrete[gripper_value < -0.33] = -1.0
+    gripper_discrete[gripper_value > 0.33] = 1.0
+    # Values between -0.33 and 0.33 remain 0.0
+    return gripper_discrete
+
+
 
 class TrainDP3Workspace:
     include_keys = ["global_step", "epoch"]
@@ -434,7 +451,7 @@ class TrainDP3Workspace:
             self.epoch += 1
             del step_log
 
-            
+
     # def eval(self):
     #     # load the latest checkpoint
     #     print("Hellooooooo")
