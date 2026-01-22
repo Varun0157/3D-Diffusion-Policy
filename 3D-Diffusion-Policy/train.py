@@ -254,13 +254,6 @@ class TrainDP3Workspace:
                 policy = self.ema_model
             policy.eval()
             
-            """
-            1. We run rollout on random envs every N epochs (not training data nor validation data) 
-            -> just randomly places the cube in the env and runs the policy
-
-            2. We run validation on the validation dataset every N epochs
-            -> this is similar to training, but on the validation set
-            """
 
             # run rollout
             if (
@@ -313,15 +306,84 @@ class TrainDP3Workspace:
 
                     result = policy.predict_action(obs_dict)
                     pred_action = result["action_pred"]
-                    mse = torch.nn.functional.mse_loss(pred_action, gt_action)
-                    print(f"Train action MSE error: {mse.item():.6f}")
-                    step_log["train_action_mse_error"] = mse.item()
+                    
+                    # ========= GRIPPER-AWARE METRICS =========
+                    
+                    # 1. Overall MSE (baseline)
+                    mse_overall = torch.nn.functional.mse_loss(pred_action, gt_action)
+                    
+                    # Determine gripper index based on action dimension
+                    action_dim = gt_action.shape[-1]
+                    if action_dim == 7:
+                        gripper_idx = 6  # [arm_joints(6), gripper(1)]
+                    elif action_dim == 13:
+                        gripper_idx = 12  # [eef_delta(6), arm_joints(6), gripper(1)]
+                    else:
+                        cprint(f"WARNING: Unexpected action_dim={action_dim}, assuming gripper at last index", "yellow")
+                        gripper_idx = action_dim - 1
+                    
+                    # 2. MSE without gripper dimension
+                    pred_action_no_gripper = torch.cat([
+                        pred_action[..., :gripper_idx],
+                        pred_action[..., gripper_idx+1:]
+                    ], dim=-1)
+                    gt_action_no_gripper = torch.cat([
+                        gt_action[..., :gripper_idx],
+                        gt_action[..., gripper_idx+1:]
+                    ], dim=-1)
+                    mse_no_gripper = torch.nn.functional.mse_loss(
+                        pred_action_no_gripper, gt_action_no_gripper
+                    )
+                    
+                    # 3. MSE with binarized gripper
+                    pred_action_binarized = pred_action.clone()
+                    pred_gripper = pred_action[..., gripper_idx]
+                    pred_gripper_discrete = discretize_gripper_action_torch(pred_gripper)
+                    pred_action_binarized[..., gripper_idx] = pred_gripper_discrete
+                    
+                    mse_binarized = torch.nn.functional.mse_loss(
+                        pred_action_binarized, gt_action
+                    )
+                    
+                    # 4. Gripper-only MSE (for reference)
+                    mse_gripper_only = torch.nn.functional.mse_loss(
+                        pred_action[..., gripper_idx],
+                        gt_action[..., gripper_idx]
+                    )
+                    
+                    # 5. Gripper accuracy (percentage of correct discrete predictions)
+                    gt_gripper_discrete = gt_action[..., gripper_idx]
+                    gripper_correct = (pred_gripper_discrete == gt_gripper_discrete).float()
+                    gripper_accuracy = gripper_correct.mean()
+                    
+                    # Print metrics
+                    print(f"\nTrain Action Metrics (Epoch {self.epoch}):")
+                    print(f"  Overall MSE:           {mse_overall.item():.6f}")
+                    print(f"  MSE (no gripper):      {mse_no_gripper.item():.6f}")
+                    print(f"  MSE (binarized grip):  {mse_binarized.item():.6f}")
+                    print(f"  MSE (gripper only):    {mse_gripper_only.item():.6f}")
+                    print(f"  Gripper Accuracy:      {gripper_accuracy.item():.4f} ({100*gripper_accuracy.item():.2f}%)")
+                    
+                    # Log to wandb
+                    step_log["train_action_mse_overall"] = mse_overall.item()
+                    step_log["train_action_mse_no_gripper"] = mse_no_gripper.item()
+                    step_log["train_action_mse_binarized_gripper"] = mse_binarized.item()
+                    step_log["train_action_mse_gripper_only"] = mse_gripper_only.item()
+                    step_log["train_gripper_accuracy"] = gripper_accuracy.item()
+                    
+                    # Legacy metric for backward compatibility
+                    step_log["train_action_mse_error"] = mse_overall.item()
+                    
                     del batch
                     del obs_dict
                     del gt_action
                     del result
                     del pred_action
-                    del mse
+                    del mse_overall
+                    del mse_no_gripper
+                    del mse_binarized
+                    del mse_gripper_only
+                    del gripper_accuracy
 
             if env_runner is None:
                 step_log["test_mean_score"] = -train_loss
@@ -372,6 +434,7 @@ class TrainDP3Workspace:
             self.epoch += 1
             del step_log
 
+            
     # def eval(self):
     #     # load the latest checkpoint
     #     print("Hellooooooo")
