@@ -258,37 +258,45 @@ class UR5Robotiq85:
 
             
     def get_robot_state(self):
-        """Get complete robot state: end-effector pose + joint angles"""
+        """Get complete robot state with normalized gripper [0, 1] - MATCHES DATA COLLECTION"""
         eef_state = p.getLinkState(self.id, self.eef_id)
         eef_pos = np.array(eef_state[0])
         eef_orn_quat = np.array(eef_state[1])
         eef_orn_euler = np.array(p.getEulerFromQuaternion(eef_orn_quat))
 
-        joint_states = []
-        for joint_id in self.arm_controllable_joints:
-            joint_state = p.getJointState(self.id, joint_id)
-            joint_states.append(joint_state[0])
+        joint_states = [p.getJointState(self.id, i)[0] for i in self.arm_controllable_joints]
 
-        gripper_state = p.getJointState(self.id, self.mimic_parent_id)
-        gripper_angle = gripper_state[0]
+        # Get raw gripper angle
+        raw_gripper_angle = p.getJointState(self.id, self.mimic_parent_id)[0]
 
-        state = np.concatenate([eef_pos, eef_orn_euler, joint_states, [gripper_angle]])
+        # 1. Apply noise threshold (MATCHES DATA COLLECTION)
+        if abs(raw_gripper_angle) < 1e-3:
+            raw_gripper_angle = 0.0
 
+        # 2. Cap at 0.35 and Normalize to [0, 1] (MATCHES DATA COLLECTION)
+        normalized_gripper = min(raw_gripper_angle, 0.35) / 0.35
+
+        state = np.concatenate([eef_pos, eef_orn_euler, joint_states, [normalized_gripper]])
         return state
+    
 
     def get_joint_positions(self):
-        """Get current joint positions (6 arm joints + 1 gripper)"""
+        """Get current joint positions (6 arm joints + 1 normalized gripper)"""
         joint_positions = []
         for joint_id in self.arm_controllable_joints:
             joint_state = p.getJointState(self.id, joint_id)
             joint_positions.append(joint_state[0])
 
-        gripper_state = p.getJointState(self.id, self.mimic_parent_id)
-        joint_positions.append(gripper_state[0])
+        # Get normalized gripper state (MATCHES DATA COLLECTION)
+        raw_gripper_angle = p.getJointState(self.id, self.mimic_parent_id)[0]
+        if abs(raw_gripper_angle) < 1e-3:
+            raw_gripper_angle = 0.0
+        normalized_gripper = min(raw_gripper_angle, 0.35) / 0.35
+        joint_positions.append(normalized_gripper)
 
         return np.array(joint_positions)
 
-    def get_joint_limits(self):
+    def get_joint_limits(self): #not used anywhere -> so lite
         """Get joint limits for arm joints and gripper"""
         limits_lower = self.arm_lower_limits + [self.gripper_range[0]]
         limits_upper = self.arm_upper_limits + [self.gripper_range[1]]
@@ -305,32 +313,51 @@ class UR5Robotiq85:
                 maxVelocity=self.max_velocity,
             )
 
-    def set_gripper(self, gripper_angle):
-        """Set gripper angle directly"""
-        # p.setJointMotorControl2(
-        #     self.id,
-        #     self.mimic_parent_id,
-        #     p.POSITION_CONTROL,
-        #     targetPosition=gripper_angle,
-        #     force=100,
-        # )
+    def set_gripper(self, normalized_gripper_value):
+        """
+        Set gripper using normalized value [0, 1] with interpolation
+        MATCHES DATA COLLECTION APPROACH
+        
+        Args:
+            normalized_gripper_value: Target gripper in [0, 1] range
+        """
+        # Convert normalized [0, 1] to raw angle [0, 0.35]
+        target_angle = normalized_gripper_value * 0.35
+        print(f"Setting gripper to target angle: {target_angle}")
+                
+        # Control parent joint
         p.setJointMotorControl2(
             self.id, 
             self.mimic_parent_id, 
             p.POSITION_CONTROL, 
-            targetPosition=gripper_angle,
+            targetPosition=target_angle,
             force=1500,
             maxVelocity=1.5
         )
-
-        for _ in range(50):
+        
+        # Control all mimic children joints explicitly (MATCHES DATA COLLECTION)
+        for joint_id, multiplier in self.mimic_child_multiplier.items():
+            child_target = target_angle * multiplier
+            p.setJointMotorControl2(
+                self.id,
+                joint_id,
+                p.POSITION_CONTROL,
+                targetPosition=child_target,
+                force=1500,
+                maxVelocity=1.0
+            )
+        
+        # Step simulation
+        for _ in range(250):  
             p.stepSimulation()
+
 
             
     def set_joint_positions(self, joint_positions):
         """
-        Set joint positions using high-gain position control
+        Set all joint positions (6 arm + 1 normalized gripper)
         """
+        # Set arm joints
         for i, joint_id in enumerate(self.arm_controllable_joints):
             p.setJointMotorControl2(
                 self.id,
@@ -341,22 +368,11 @@ class UR5Robotiq85:
                 maxVelocity=10,
             )
 
+        # Set gripper if provided
         if len(joint_positions) > self.arm_num_dofs:
-            gripper_angle = joint_positions[self.arm_num_dofs]
-            p.setJointMotorControl2(
-                self.id,
-                self.mimic_parent_id,
-                p.POSITION_CONTROL,
-                targetPosition=gripper_angle,
-                force=200,  # ← Make sure this is here too
-                maxVelocity=1.0,
-            )
+            normalized_gripper = joint_positions[self.arm_num_dofs]
+            self.set_gripper(normalized_gripper)
 
-    def set_joint_positions(self, joint_positions):
-        """Set all joint positions (6 arm + 1 gripper)"""
-        self.set_arm_joints(joint_positions[:6])
-        if len(joint_positions) > 6:
-            self.set_gripper(joint_positions[6])
 
     def get_eef_position(self):
         """Get end-effector 3D position"""
@@ -456,22 +472,6 @@ class UR5PickPlaceEnv(gym.Env):
 
         self.is_success_flag = False
 
-    # def _toggle_table_visibility(self, visible):
-    #     """
-    #     Toggle visibility of table and plane for point cloud capture.
-    #
-    #     Args:
-    #         visible: If True, show table/plane. If False, make them transparent.
-    #     """
-    #     if visible:
-    #         # Make table and plane visible
-    #         p.changeVisualShape(self.table_id, -1, rgbaColor=[1, 1, 1, 1])
-    #         # p.changeVisualShape(self.plane_id, -1, rgbaColor=[1, 1, 1, 1])
-    #     else:
-    #         # Make table and plane transparent (invisible in camera)
-    #         p.changeVisualShape(self.table_id, -1, rgbaColor=[1, 1, 1, 0])
-    #         # p.changeVisualShape(self.plane_id, -1, rgbaColor=[1, 1, 1, 0])
-
     def reset(self, cube_start_pos=None, cube_start_orn=None):
         """
         Reset the environment
@@ -504,18 +504,41 @@ class UR5PickPlaceEnv(gym.Env):
                 self.robot.id, joint_id, p.POSITION_CONTROL, rest_pose[i]
             )
 
+        # Reset gripper - MATCHES DATA COLLECTION APPROACH
+        print("Resetting gripper...")
+        
+        # 1. Teleport the physical state to 0
+        p.resetJointState(self.robot.id, self.robot.mimic_parent_id, 0)
+        for joint_id, multiplier in self.robot.mimic_child_multiplier.items():
+            p.resetJointState(self.robot.id, joint_id, 0)
+
+        # 2. Reset the motor control target to 0
         p.setJointMotorControl2(
-            self.robot.id,
-            self.robot.mimic_parent_id,
-            p.POSITION_CONTROL,
-            targetPosition=0.0,
-            force=200,
+            self.robot.id, 
+            self.robot.mimic_parent_id, 
+            p.POSITION_CONTROL, 
+            targetPosition=0,
+            force=1500
         )
+
+        # Also reset child motor targets
+        for joint_id, multiplier in self.robot.mimic_child_multiplier.items():
+            p.setJointMotorControl2(
+                self.robot.id,
+                joint_id,
+                p.POSITION_CONTROL,
+                targetPosition=0,
+                force=1500
+            )
 
         # Stabilize
         print("\nStabilizing robot at rest pose...")
         for _ in range(1000):
             p.stepSimulation()
+
+        actual_angle = p.getJointState(self.robot.id, self.robot.mimic_parent_id)[0]
+        print(f"Gripper reset to: {actual_angle:.4f}\n")
+
 
         print("\n\nStarting position of robot : ", self.robot.get_joint_positions())
         # Use provided cube position or generate random one
@@ -578,19 +601,21 @@ class UR5PickPlaceEnv(gym.Env):
         current_joint_pos = self.robot.get_joint_positions()
 
         target_arm = current_joint_pos[:6] + arm_deltas
-        target_gripper = current_joint_pos[6] + gripper_delta
 
+        # Update gripper in normalized space [0, 1]
+        target_gripper_normalized = current_joint_pos[6] + gripper_delta
+        target_gripper_normalized = np.clip(target_gripper_normalized, 0.0, 1.0)
+
+        print("Target Gripper normalized value set to : ", target_gripper_normalized)
         self.robot.set_arm_joints(target_arm)
-
-        # print(f"Target griper pos to reach : {target_gripper}")
-        self.robot.set_gripper(target_gripper)
+        self.robot.set_gripper(target_gripper_normalized)
 
         for _ in range(1000):
             p.stepSimulation()
 
         time.sleep(0.55)
 
-        # print(f"Actual griper pos reached : {self.robot.get_joint_positions()[6]}\n\n")
+        print(f"Actual griper pos reached : {self.robot.get_joint_positions()[6]}\n\n")
 
         obs = self._get_obs()
 
