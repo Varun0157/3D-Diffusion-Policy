@@ -343,15 +343,15 @@ class UR5Robotiq85:
         # Map discrete command to actual velocity
         # CRITICAL: Match data collection behavior
         if velocity_command == -1.0:
-            cprint("Gripper received OPEN command." , "green")
+            # cprint("Gripper received OPEN command." , "green")
             actual_velocity = -0.25 * 20.0  # Open slowly
 
         elif velocity_command == 0.0:
-            cprint("Gripper received HOLD command." , "yellow")
+            # cprint("Gripper received HOLD command." , "yellow")
             actual_velocity = 0.0  # Hold
 
         elif velocity_command == 1.0:
-            cprint("Gripper received CLOSE command." , "green")
+            # cprint("Gripper received CLOSE command." , "green")
             actual_velocity = 1.0 * 20.0  # Close
 
         else:
@@ -523,7 +523,8 @@ class UR5PickPlaceEnv(gym.Env):
         )
 
         # print(f"Gripper reset to: {actual_angle:.4f}\n")
-        self.robot.move_gripper(0.0)
+        # self.robot.move_gripper(0.0)
+    
     
         for _ in range(5000):
             p.stepSimulation()
@@ -596,7 +597,7 @@ class UR5PickPlaceEnv(gym.Env):
         
         # Discretize gripper command to {-1, 0, 1}
 
-        print("Received gripper velocity command: ", gripper_velocity_cmd)
+        # print("Received gripper velocity command: ", gripper_velocity_cmd)
         if gripper_velocity_cmd < -0.33: # anything less than -0.33 is open
             gripper_cmd_discrete = -1.0
         elif gripper_velocity_cmd > 0.33: # anything greater than 0.33 is close
@@ -605,7 +606,7 @@ class UR5PickPlaceEnv(gym.Env):
             gripper_cmd_discrete = 0.0
 
 
-        print("Discretized gripper command to: ", gripper_cmd_discrete)
+        # print("Discretized gripper command to: ", gripper_cmd_discrete)
 
         # Get current state (with normalized gripper)
         current_joint_pos = self.robot.get_joint_positions()
@@ -623,7 +624,7 @@ class UR5PickPlaceEnv(gym.Env):
 
         time.sleep(0.55)
 
-        print(f"Actual griper pos reached : {self.robot.get_joint_positions()[6]}\n\n")
+        # print(f"Actual griper pos reached : {self.robot.get_joint_positions()[6]}\n\n")
 
         obs = self._get_obs()
 

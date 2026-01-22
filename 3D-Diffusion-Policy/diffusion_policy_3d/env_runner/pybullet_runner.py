@@ -402,17 +402,17 @@ class UR5PyBulletRunner(BaseRunner):
                         pred_grippers_discrete = pred_actions_discrete[:, gripper_idx]
                         
                         # Print comparison for ALL actions that will be executed
-                        cprint(f"\n{'='*80}", "cyan")
-                        cprint(f"Episode {episode_id}, Policy Step {step_id} (GT Timesteps {gt_start_idx} to {gt_end_idx-1}):", "cyan")
-                        cprint(f"Executing {len(gt_grippers)} actions:", "cyan")
+                        # cprint(f"\n{'='*80}", "cyan")
+                        # cprint(f"Episode {episode_id}, Policy Step {step_id} (GT Timesteps {gt_start_idx} to {gt_end_idx-1}):", "cyan")
+                        # cprint(f"Executing {len(gt_grippers)} actions:", "cyan")
                         
                         for i in range(len(gt_grippers)):
                             actual_gt_timestep = gt_start_idx + i
-                            cprint(f"  [{i}] GT Timestep {actual_gt_timestep}:", "white")
-                            cprint(f"      GT Gripper:        {gt_grippers[i]:.6f}", "green")
-                            cprint(f"      Pred Continuous:   {pred_grippers_continuous[i]:.6f}", "yellow")
-                            cprint(f"      Pred Discrete:     {pred_grippers_discrete[i]:.6f}", "magenta")
-                            cprint(f"      Diff (GT-Disc):    {abs(gt_grippers[i] - pred_grippers_discrete[i]):.6f}", "red")
+                            # cprint(f"  [{i}] GT Timestep {actual_gt_timestep}:", "white")
+                            # cprint(f"      GT Gripper:        {gt_grippers[i]:.6f}", "green")
+                            # cprint(f"      Pred Continuous:   {pred_grippers_continuous[i]:.6f}", "yellow")
+                            # cprint(f"      Pred Discrete:     {pred_grippers_discrete[i]:.6f}", "magenta")
+                            # cprint(f"      Diff (GT-Disc):    {abs(gt_grippers[i] - pred_grippers_discrete[i]):.6f}", "red")
                         
                             with open(log_file_path, 'a') as log_file:
                                 log_file.write(f"  Action [{i}] - GT Timestep {actual_gt_timestep}:\n")
