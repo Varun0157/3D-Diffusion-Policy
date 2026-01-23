@@ -393,7 +393,7 @@ class UR5PickPlaceEnv(gym.Env):
 
     def __init__(
         self,
-        use_gui=True,
+        use_gui=False,
         num_points=6000,
         image_size=224,
         use_workspace_crop=True,
