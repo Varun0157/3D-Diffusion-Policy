@@ -122,10 +122,16 @@ def depth_to_point_cloud(
 
     points_camera = np.stack([x, y, z], axis=-1).reshape(-1, 3)
 
-    # Filter points beyond max_depth
+    # # Transform to world frame
+    # points_hom = np.hstack([points_camera, np.ones((points_camera.shape[0], 1))])
+    # view_matrix_np = np.array(view_matrix).reshape(4, 4).T
+    # points_world = (np.linalg.inv(view_matrix_np) @ points_hom.T).T[:, :3]
+
+    # # Filter points beyond max_depth
     valid_mask = points_camera[:, 2] < max_depth
 
     if exclude_mask is not None:  # to exclude table and plane
+        # print("Excluding points based on provided mask.")
         valid_mask = valid_mask & (~exclude_mask)
 
     points_camera = points_camera[valid_mask]
@@ -152,6 +158,7 @@ class UR5Robotiq85:
     def load(self):
         self.id = p.loadURDF(
             "/home/cross-emb/3D-Diffusion-Policy/3D-Diffusion-Policy/diffusion_policy_3d/env/pybullet/urdf/ur5_robotiq_85.urdf",
+            # "/home/aniruth/Desktop/RRC/3D-Diffusion-Policy/3D-Diffusion-Policy/diffusion_policy_3d/env/pybullet/urdf/ur5_robotiq_85.urdf" ,
             self.base_pos,
             self.base_ori,
             useFixedBase=True,
@@ -255,16 +262,10 @@ class UR5Robotiq85:
             p.changeConstraint(c, gearRatio=-multiplier, maxForce=100, erp=1)
 
             
-    def get_robot_state(self, include_gripper=True):
+    def get_robot_state(self):
         """
-        Get complete robot state
-        
-        Args:
-            include_gripper: If True, return [eef_pos(3), eef_orn_euler(3), joint_angles(6), gripper_normalized(1)]
-                           If False, return [eef_pos(3), eef_orn_euler(3), joint_angles(6)]
-        
-        Returns: 
-            state array of size 13 (with gripper) or 12 (without gripper)
+        Get complete robot state with NORMALIZED gripper value
+        Returns: [eef_pos(3), eef_orn_euler(3), joint_angles(6), gripper_normalized(1)]
         """
         eef_state = p.getLinkState(self.id, self.eef_id)
         eef_pos = np.array(eef_state[0])
@@ -276,67 +277,43 @@ class UR5Robotiq85:
             joint_state = p.getJointState(self.id, joint_id)
             joint_states.append(joint_state[0])
 
-        if include_gripper:
-            # Get raw gripper angle and normalize
-            raw_angle = p.getJointState(self.id, self.mimic_parent_id)[0]
-            
-            # Noise suppression
-            if abs(raw_angle) < 1e-3:
-                raw_angle = 0.0
-            
-            # Normalize to [0, 1] using GRIPPER_NORM_LIMIT
-            gripper_normalized = np.clip(raw_angle / self.GRIPPER_NORM_LIMIT, 0.0, 1.0)
-            state = np.concatenate([eef_pos, eef_orn_euler, joint_states, [gripper_normalized]])
-        else:
-            state = np.concatenate([eef_pos, eef_orn_euler, joint_states])
+        # Get raw gripper angle and normalize (same as data collection)
+        raw_angle = p.getJointState(self.id, self.mimic_parent_id)[0]
+        
+        # Noise suppression
+        if abs(raw_angle) < 1e-3:
+            raw_angle = 0.0
+        
+        # Normalize to [0, 1] using GRIPPER_NORM_LIMIT
+        gripper_normalized = np.clip(raw_angle / self.GRIPPER_NORM_LIMIT, 0.0, 1.0)
 
+        state = np.concatenate([eef_pos, eef_orn_euler, joint_states, [gripper_normalized]])
         return state
     
 
-    def get_joint_positions(self, include_gripper=True):
-        """
-        Get current joint positions
-        
-        Args:
-            include_gripper: If True, return [arm_joints(6), gripper_normalized(1)]
-                           If False, return [arm_joints(6)]
-        
-        Returns:
-            joint positions array
-        """
+
+    def get_joint_positions(self):
+        """Get current joint positions (6 arm joints + 1 NORMALIZED gripper)"""
         joint_positions = []
         for joint_id in self.arm_controllable_joints:
             joint_state = p.getJointState(self.id, joint_id)
             joint_positions.append(joint_state[0])
 
-        if include_gripper:
-            # Get normalized gripper value
-            raw_angle = p.getJointState(self.id, self.mimic_parent_id)[0]
-            if abs(raw_angle) < 1e-3:
-                raw_angle = 0.0
-            gripper_normalized = np.clip(raw_angle / self.GRIPPER_NORM_LIMIT, 0.0, 1.0)
-            joint_positions.append(gripper_normalized)
+        # Get normalized gripper value
+        raw_angle = p.getJointState(self.id, self.mimic_parent_id)[0]
+        if abs(raw_angle) < 1e-3:
+
+            raw_angle = 0.0
+        gripper_normalized = np.clip(raw_angle / self.GRIPPER_NORM_LIMIT, 0.0, 1.0)
+        joint_positions.append(gripper_normalized)
 
         return np.array(joint_positions)
 
 
-    def get_joint_limits(self, include_gripper=True):
-        """
-        Get joint limits
-        
-        Args:
-            include_gripper: If True, include gripper limits
-        
-        Returns:
-            limits_lower, limits_upper
-        """
-        limits_lower = self.arm_lower_limits
-        limits_upper = self.arm_upper_limits
-        
-        if include_gripper:
-            limits_lower = limits_lower + [self.gripper_range[0]]
-            limits_upper = limits_upper + [self.gripper_range[1]]
-            
+    def get_joint_limits(self):
+        """Get joint limits for arm joints and gripper"""
+        limits_lower = self.arm_lower_limits + [self.gripper_range[0]]
+        limits_upper = self.arm_upper_limits + [self.gripper_range[1]]
         return np.array(limits_lower), np.array(limits_upper)
 
     def set_arm_joints(self, joint_positions):
@@ -364,15 +341,22 @@ class UR5Robotiq85:
         self.current_gripper_velocity = velocity_command
         
         # Map discrete command to actual velocity
+        # CRITICAL: Match data collection behavior
         if velocity_command == -1.0:
+            # cprint("Gripper received OPEN command." , "green")
             actual_velocity = -0.25 * 20.0  # Open slowly
+
         elif velocity_command == 0.0:
+            # cprint("Gripper received HOLD command." , "yellow")
             actual_velocity = 0.0  # Hold
+
         elif velocity_command == 1.0:
+            # cprint("Gripper received CLOSE command." , "green")
             actual_velocity = 1.0 * 20.0  # Close
+
         else:
             # Continuous value - scale it
-            cprint("Warning: Using continuous gripper velocity command.", "red")
+            cprint("Warning: Using continuous gripper velocity command." , "red")
             actual_velocity = velocity_command * 20.0
         
         p.setJointMotorControl2(
@@ -383,23 +367,23 @@ class UR5Robotiq85:
             force=100  # High force for reliable movement
         )
 
+
             
-    def set_joint_positions(self, joint_positions, include_gripper=True):
+    def set_joint_positions(self, joint_positions):
         """
-        Set all joint positions
+        Set all joint positions (6 arm + 1 gripper velocity command)
         
         Args:
-            joint_positions: If include_gripper=True: [arm_joints(6), gripper_velocity_cmd(1)]
-                           If include_gripper=False: [arm_joints(6)]
-            include_gripper: Whether gripper command is included
+            joint_positions: [arm_joints(6), gripper_velocity_cmd(1)]
         """
         # Set arm joints
         self.set_arm_joints(joint_positions[:6])
         
-        # Set gripper using velocity command (if included)
-        if include_gripper and len(joint_positions) > 6:
+        # Set gripper using velocity command
+        if len(joint_positions) > 6:
             gripper_cmd = joint_positions[6]
             self.move_gripper(gripper_cmd)
+
 
 
     def get_eef_position(self):
@@ -410,10 +394,14 @@ class UR5Robotiq85:
 
 class UR5PickPlaceEnv(gym.Env):
     """
-    PyBullet UR5 Pick and Place Environment
+    PyBullet UR5 Pick and Place Environment with VELOCITY-BASED gripper control
     
-    Supports both 6D (arm only) and 7D (arm + gripper) action spaces
+    Key changes from original:
+    1. Gripper state is normalized to [0, 1]
+    2. Gripper actions are discrete velocity commands: {-1, 0, 1}
+    3. States returned include normalized gripper value
     """
+
 
     metadata = {"render.modes": ["rgb_array"], "video.frames_per_second": 10}
 
@@ -427,6 +415,7 @@ class UR5PickPlaceEnv(gym.Env):
         action_dim=7,
         capture_table=False,
     ):
+
         self.use_gui = use_gui
         self.num_points = num_points
         self.image_size = image_size
@@ -439,12 +428,6 @@ class UR5PickPlaceEnv(gym.Env):
 
         self.action_dim = action_dim
         self.capture_table = capture_table
-        
-        # NEW: Determine if gripper is included
-        self.include_gripper = (action_dim == 7 or action_dim == 13)
-        
-        cprint(f"Environment initialized with action_dim={action_dim}", "cyan")
-        cprint(f"Include gripper: {self.include_gripper}", "cyan")
 
         # Connect to PyBullet
         if self.use_gui:
@@ -455,6 +438,7 @@ class UR5PickPlaceEnv(gym.Env):
         p.setGravity(0, 0, -9.8)
         p.setAdditionalSearchPath(pybullet_data.getDataPath())
 
+        # self.plane_id = p.loadURDF("plane.urdf")
         self.table_id = p.loadURDF(
             "table/table.urdf", [0.5, 0, 0], p.getQuaternionFromEuler([0, 0, 0])
         )
@@ -521,6 +505,7 @@ class UR5PickPlaceEnv(gym.Env):
         if self.cube_id is not None:
             p.removeBody(self.cube_id)
 
+
         # Move to rest pose
         rest_pose = [0, -1.57, 1.57, -1.5, -1.57, 0.0]
         for i, joint_id in enumerate(self.robot.arm_controllable_joints):
@@ -528,27 +513,31 @@ class UR5PickPlaceEnv(gym.Env):
                 self.robot.id, joint_id, p.POSITION_CONTROL, rest_pose[i]
             )
 
-        if self.include_gripper:
-            p.setJointMotorControl2(
-                self.robot.id, 
-                self.robot.mimic_parent_id, 
-                p.POSITION_CONTROL, 
-                targetPosition=0.000,
-                force=1500,
-                maxVelocity=1.5
-            )
+        p.setJointMotorControl2(
+            self.robot.id, 
+            self.robot.mimic_parent_id, 
+            p.POSITION_CONTROL, 
+            targetPosition=0.000,
+            force=1500,
+            maxVelocity=1.5
+        )
+
+        # print(f"Gripper reset to: {actual_angle:.4f}\n")
+        # self.robot.move_gripper(0.0)
+    
     
         for _ in range(5000):
             p.stepSimulation()
+
         
         # Stabilize
         print("\nStabilizing robot at rest pose...")
         for _ in range(1000):
             p.stepSimulation()
 
-        if self.include_gripper:
-            actual_angle = p.getJointState(self.robot.id, self.robot.mimic_parent_id)[0]
-            print("Reset complete. Gripper position after reset: {:.4f}\n".format(actual_angle))
+        actual_angle = p.getJointState(self.robot.id, self.robot.mimic_parent_id)[0]
+
+        print("Reset complete. Gripper position after reset: {:.4f}\n".format(actual_angle))
 
         # Use provided cube position or generate random one
         if cube_start_pos is not None:
@@ -563,9 +552,12 @@ class UR5PickPlaceEnv(gym.Env):
 
         # Use provided orientation or default to identity quaternion
         if cube_start_orn is not None:
+            # Convert from [x, y, z, w] to PyBullet quaternion if needed
             if len(cube_start_orn) == 4:
+                # Already a quaternion
                 cube_orn_quat = cube_start_orn
             else:
+                # Assume Euler angles
                 cube_orn_quat = p.getQuaternionFromEuler(cube_start_orn)
         else:
             cprint("Using default cube(random) orientation.", "red")
@@ -587,58 +579,52 @@ class UR5PickPlaceEnv(gym.Env):
     def step(self, action):
         """
         Execute action and return observation.
-        
-        Args:
-            action: Action array. Can be:
-                - 6D: [arm_deltas(6)] - arm only, no gripper
-                - 7D: [arm_deltas(6), gripper_velocity_cmd(1)]
-                - 13D: [eef_delta(6), arm_deltas(6), gripper_velocity_cmd(1)]
         """
         self.current_step += 1
 
-        # Handle different action dimensions
+        # print("Shape of action received in env step: ", action.shape)
+
+        # Handle both 7D and 13D action spaces
         if len(action) == 13:
             joint_deltas = action[6:13]
-            arm_deltas = joint_deltas[:6]
-            if self.include_gripper:
-                gripper_velocity_cmd = joint_deltas[6]
         elif len(action) == 7:
-            arm_deltas = action[:6]
-            if self.include_gripper:
-                gripper_velocity_cmd = action[6]
-        elif len(action) == 6:
-            # 6D action - arm only, no gripper
-            arm_deltas = action[:6]
-            gripper_velocity_cmd = None
+            joint_deltas = action
         else:
-            raise ValueError(f"Action must be 6D, 7D, or 13D, got {len(action)}D")
+            raise ValueError(f"Action must be 7D or 13D, got {len(action)}D")
 
-        # Discretize gripper command if included
-        if self.include_gripper and gripper_velocity_cmd is not None:
-            if gripper_velocity_cmd < -0.33:
-                gripper_cmd_discrete = -1.0
-            elif gripper_velocity_cmd > 0.33:
-                gripper_cmd_discrete = 1.0
-            else:
-                gripper_cmd_discrete = 0.0
-        else:
-            gripper_cmd_discrete = None
+        arm_deltas = joint_deltas[:6]
+        gripper_velocity_cmd = joint_deltas[6]
+        
+        # Discretize gripper command to {-1, 0, 1}
 
-        # Get current state
-        current_joint_pos = self.robot.get_joint_positions(include_gripper=self.include_gripper)
+        # print("Received gripper velocity command: ", gripper_velocity_cmd)
+        if gripper_velocity_cmd < -0.33: # anything less than -0.33 is open
+            gripper_cmd_discrete = -1.0
+        elif gripper_velocity_cmd > 0.33: # anything greater than 0.33 is close
+            gripper_cmd_discrete = 1.0
+        else: # in between is hold
+            gripper_cmd_discrete = 0.0
+
+
+        # print("Discretized gripper command to: ", gripper_cmd_discrete)
+
+        # Get current state (with normalized gripper)
+        current_joint_pos = self.robot.get_joint_positions()
 
         # Update arm joints
         target_arm = current_joint_pos[:6] + arm_deltas
         self.robot.set_arm_joints(target_arm)
 
-        # Update gripper if included
-        if self.include_gripper and gripper_cmd_discrete is not None:
-            self.robot.move_gripper(gripper_cmd_discrete)
+        # Update gripper using velocity command
+        self.robot.move_gripper(gripper_cmd_discrete)
+
 
         for _ in range(1000):
             p.stepSimulation()
 
         time.sleep(0.55)
+
+        # print(f"Actual griper pos reached : {self.robot.get_joint_positions()[6]}\n\n")
 
         obs = self._get_obs()
 
@@ -665,27 +651,32 @@ class UR5PickPlaceEnv(gym.Env):
 
     def _get_obs(self):
         """Get current observation"""
-        robot_state = self.robot.get_robot_state(include_gripper=self.include_gripper)
+        robot_state = self.robot.get_robot_state()
 
         # Extract appropriate agent_pos based on action_dim
-        if self.action_dim == 6:
-            # 6D: [eef_pos(3), eef_orn_euler(3), joint_angles(6)] -> use last 6 (joint angles)
-            agent_pos = robot_state[6:12]
-        elif self.action_dim == 7:
-            # 7D: [joint_angles(6), gripper(1)]
+        if self.action_dim == 7:
             agent_pos = robot_state[6:13]
         elif self.action_dim == 13:
-            # 13D: full state
             agent_pos = robot_state
         else:
             raise ValueError(
-                f"Unsupported action_dim: {self.action_dim}. Must be 6, 7, or 13."
+                f"Unsupported action_dim: {self.action_dim}. Must be 7 or 13."
             )
 
-        # Exclude table from point cloud
+        # Exclude table and plane from point cloud !!
+
+        # print("Capture table flag is set to : ", self.capture_table)
+        # print("Table ID is : ", self.table_id)
+
         exclude_ids = []
         if self.table_id is not None and not self.capture_table:
+            # print("Excluding table from point clouds with {}".format(self.table_id))
             exclude_ids.append(self.table_id)
+        # if self.plane_id is not None:
+        #     print("Excluding plane from point clouds with {}".format(self.plane_id))
+        #     exclude_ids.append(self.plane_id)
+
+        # print("Exclude IDs for point cloud capture: ", exclude_ids)
 
         view_matrix = p.computeViewMatrix(
             cameraEyePosition=self.tp_cam_eye,
@@ -769,7 +760,7 @@ class UR5PickPlaceEnv(gym.Env):
 
         return obs_dict
 
-    def render(self, mode="rgb_array"):
+    def render(self, mode="rgb_array"):  # not used anywhere -> so lite
         """Render the environment"""
         view_matrix = p.computeViewMatrix(
             cameraEyePosition=self.tp_cam_eye,
