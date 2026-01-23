@@ -152,8 +152,8 @@ class UR5Robotiq85:
 
     def load(self):
         self.id = p.loadURDF(
-            "/home/cross-emb/3D-Diffusion-Policy/3D-Diffusion-Policy/diffusion_policy_3d/env/pybullet/urdf/ur5_robotiq_85.urdf",
-            # "/home/aniruth/Desktop/RRC/3D-Diffusion-Policy/3D-Diffusion-Policy/diffusion_policy_3d/env/pybullet/urdf/ur5_robotiq_85.urdf" ,
+            # "/home/cross-emb/3D-Diffusion-Policy/3D-Diffusion-Policy/diffusion_policy_3d/env/pybullet/urdf/ur5_robotiq_85.urdf",
+            "/home/aniruth/Desktop/RRC/3D-Diffusion-Policy/3D-Diffusion-Policy/diffusion_policy_3d/env/pybullet/urdf/ur5_robotiq_85.urdf",
             self.base_pos,
             self.base_ori,
             useFixedBase=True,
@@ -393,13 +393,15 @@ class UR5PickPlaceEnv(gym.Env):
 
     def __init__(
         self,
-        use_gui=False,
+        use_gui=True,
         num_points=6000,
         image_size=224,
         use_workspace_crop=True,
         workspace_std=30.0,
         action_dim=7,
         capture_table=False,
+        eval_mode=False,  
+
     ):
 
         self.use_gui = use_gui
@@ -414,6 +416,8 @@ class UR5PickPlaceEnv(gym.Env):
 
         self.action_dim = action_dim
         self.capture_table = capture_table
+
+        self.eval_mode = eval_mode
 
         # Connect to PyBullet
         if self.use_gui:
@@ -584,8 +588,6 @@ class UR5PickPlaceEnv(gym.Env):
         """
         self.current_step += 1
 
-        # print("Shape of action received in env step: ", action.shape)
-
         # Handle both 7D and 13D action spaces
         if len(action) == 13:
             joint_deltas = action[6:13]
@@ -594,7 +596,6 @@ class UR5PickPlaceEnv(gym.Env):
         else:
             raise ValueError(f"Action must be 7D or 13D, got {len(action)}D")
 
-        # print(joint_deltas)
         arm_deltas = joint_deltas[:6]
         gripper_delta = joint_deltas[6]
 
@@ -603,8 +604,40 @@ class UR5PickPlaceEnv(gym.Env):
         target_arm = current_joint_pos[:6] + arm_deltas
 
         # Update gripper in normalized space [0, 1]
-        target_gripper_normalized = current_joint_pos[6] + gripper_delta
-        target_gripper_normalized = np.clip(target_gripper_normalized, 0.0, 1.0)
+        current_gripper_normalized = current_joint_pos[6]
+        
+        # NEW: Apply eval-time gripper adjustment
+        if self.eval_mode:
+            # Convert delta from normalized [0, 1] space to raw angle space
+            raw_gripper_delta = gripper_delta * 0.35
+            
+            # Check condition: state >= 0.5 and action >= 0
+            if current_gripper_normalized >= 0.5 and gripper_delta >= 0:
+                # Add 0.01 to raw delta
+                raw_gripper_delta += 0.01
+                cprint(f"EVAL MODE: Added 0.01 to gripper delta. New raw delta: {raw_gripper_delta:.4f}", "cyan")
+            
+            # Compute target in raw space
+            current_raw_gripper = current_gripper_normalized * 0.35
+            target_raw_gripper = current_raw_gripper + raw_gripper_delta
+            
+            # Allow exceeding 0.35 when condition is met
+            if current_gripper_normalized >= 0.5 and gripper_delta >= 0:
+                # Don't cap at 0.35 - let it go higher
+                target_raw_gripper = max(0.0, target_raw_gripper)  # Only prevent negative
+                cprint(f"EVAL MODE: Allowing gripper to exceed 0.35. Target raw: {target_raw_gripper:.4f}", "yellow")
+            else:
+                # Normal clamping
+                target_raw_gripper = np.clip(target_raw_gripper, 0.0, 0.35)
+            
+            # Convert back to normalized for set_gripper
+            target_gripper_normalized = target_raw_gripper / 0.35
+            # In eval mode, we may exceed 1.0
+            target_gripper_normalized = max(0.0, target_gripper_normalized)
+        else:
+            # Original behavior for training
+            target_gripper_normalized = current_gripper_normalized + gripper_delta
+            target_gripper_normalized = np.clip(target_gripper_normalized, 0.0, 1.0)
 
         print("Target Gripper normalized value set to : ", target_gripper_normalized)
         self.robot.set_arm_joints(target_arm)
@@ -615,7 +648,7 @@ class UR5PickPlaceEnv(gym.Env):
 
         time.sleep(0.55)
 
-        print(f"Actual griper pos reached : {self.robot.get_joint_positions()[6]}\n\n")
+        print(f"Actual gripper pos reached : {self.robot.get_joint_positions()[6]}\n\n")
 
         obs = self._get_obs()
 
@@ -639,7 +672,8 @@ class UR5PickPlaceEnv(gym.Env):
 
         info = {"is_success": self.is_success_flag}
         return obs, reward, done, info
-
+    
+    
     def _get_obs(self):
         """Get current observation"""
         robot_state = self.robot.get_robot_state()
