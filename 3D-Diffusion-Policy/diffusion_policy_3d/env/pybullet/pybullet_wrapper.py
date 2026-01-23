@@ -356,9 +356,9 @@ class UR5Robotiq85:
                 maxVelocity=1.0
             )
     
-    # Step simulation
-    for _ in range(250):  
-        p.stepSimulation()
+        # Step simulation
+        for _ in range(250):  
+            p.stepSimulation()
 
             
     def set_joint_positions(self, joint_positions):
