@@ -280,9 +280,7 @@ class TrainDP3Workspace:
             ):
                 t3 = time.time()
                 runner_log = env_runner.run(policy, dataset=dataset)
-                # runner_log = env_runner.run(policy)
                 t4 = time.time()
-                # print(f"rollout time: {t4-t3:.3f}")
                 # log all
                 step_log.update(runner_log)
 
@@ -324,72 +322,90 @@ class TrainDP3Workspace:
                     result = policy.predict_action(obs_dict)
                     pred_action = result["action_pred"]
                     
-                    # ========= GRIPPER-AWARE METRICS =========
+                    # ========= GRIPPER-AWARE METRICS (6D vs 7D) =========
+                    
+                    # Determine action dimension
+                    action_dim = gt_action.shape[-1]
                     
                     # 1. Overall MSE (baseline)
                     mse_overall = torch.nn.functional.mse_loss(pred_action, gt_action)
                     
-                    # Determine gripper index based on action dimension
-                    action_dim = gt_action.shape[-1]
-                    if action_dim == 7:
-                        gripper_idx = 6  # [arm_joints(6), gripper(1)]
-                    elif action_dim == 13:
-                        gripper_idx = 12  # [eef_delta(6), arm_joints(6), gripper(1)]
-                    else:
-                        cprint(f"WARNING: Unexpected action_dim={action_dim}, assuming gripper at last index", "yellow")
-                        gripper_idx = action_dim - 1
-                    
-                    # 2. MSE without gripper dimension
-                    pred_action_no_gripper = torch.cat([
-                        pred_action[..., :gripper_idx],
-                        pred_action[..., gripper_idx+1:]
-                    ], dim=-1)
-                    gt_action_no_gripper = torch.cat([
-                        gt_action[..., :gripper_idx],
-                        gt_action[..., gripper_idx+1:]
-                    ], dim=-1)
-                    mse_no_gripper = torch.nn.functional.mse_loss(
-                        pred_action_no_gripper, gt_action_no_gripper
-                    )
-                    
-                    # 3. MSE with binarized gripper
-                    pred_action_binarized = pred_action.clone()
-                    pred_gripper = pred_action[..., gripper_idx]
-                    pred_gripper_discrete = discretize_gripper_action_torch(pred_gripper)
-                    pred_action_binarized[..., gripper_idx] = pred_gripper_discrete
-                    
-                    mse_binarized = torch.nn.functional.mse_loss(
-                        pred_action_binarized, gt_action
-                    )
-                    
-                    # 4. Gripper-only MSE (for reference)
-                    mse_gripper_only = torch.nn.functional.mse_loss(
-                        pred_action[..., gripper_idx],
-                        gt_action[..., gripper_idx]
-                    )
-                    
-                    # 5. Gripper accuracy (percentage of correct discrete predictions)
-                    gt_gripper_discrete = gt_action[..., gripper_idx]
-                    gripper_correct = (pred_gripper_discrete == gt_gripper_discrete).float()
-                    gripper_accuracy = gripper_correct.mean()
-                    
-                    # Print metrics
-                    print(f"\nTrain Action Metrics (Epoch {self.epoch}):")
-                    print(f"  Overall MSE:           {mse_overall.item():.6f}")
-                    print(f"  MSE (no gripper):      {mse_no_gripper.item():.6f}")
-                    print(f"  MSE (binarized grip):  {mse_binarized.item():.6f}")
-                    print(f"  MSE (gripper only):    {mse_gripper_only.item():.6f}")
-                    print(f"  Gripper Accuracy:      {gripper_accuracy.item():.4f} ({100*gripper_accuracy.item():.2f}%)")
-                    
-                    # Log to wandb
-                    step_log["train_action_mse_overall"] = mse_overall.item()
-                    step_log["train_action_mse_no_gripper"] = mse_no_gripper.item()
-                    step_log["train_action_mse_binarized_gripper"] = mse_binarized.item()
-                    step_log["train_action_mse_gripper_only"] = mse_gripper_only.item()
-                    step_log["train_gripper_accuracy"] = gripper_accuracy.item()
-                    
-                    # Legacy metric for backward compatibility
-                    step_log["train_action_mse_error"] = mse_overall.item()
+                    if action_dim == 6:
+                        # ===== 6D ACTION SPACE (ARM ONLY, NO GRIPPER) =====
+                        cprint(f"\nTrain Action Metrics (Epoch {self.epoch}) - 6D (Arm Only):", "cyan")
+                        cprint(f"  Overall MSE:           {mse_overall.item():.6f}", "cyan")
+                        
+                        # Per-joint MSE
+                        mse_per_joint = torch.mean((pred_action - gt_action) ** 2, dim=(0, 1))
+                        for i in range(6):
+                            cprint(f"  Joint {i} MSE:          {mse_per_joint[i].item():.6f}", "cyan")
+                        
+                        # Log to wandb
+                        step_log["train_action_mse_overall"] = mse_overall.item()
+                        step_log["train_action_mse_error"] = mse_overall.item()  # Legacy
+                        for i in range(6):
+                            step_log[f"train_joint_{i}_mse"] = mse_per_joint[i].item()
+                        
+                    elif action_dim == 7 or action_dim == 13:
+                        # ===== 7D/13D ACTION SPACE (ARM + GRIPPER) =====
+                        # Determine gripper index
+                        if action_dim == 7:
+                            gripper_idx = 6  # [arm_joints(6), gripper(1)]
+                        elif action_dim == 13:
+                            gripper_idx = 12  # [eef_delta(6), arm_joints(6), gripper(1)]
+                        else:
+                            cprint(f"WARNING: Unexpected action_dim={action_dim}", "yellow")
+                            gripper_idx = action_dim - 1
+                        
+                        # 2. MSE without gripper dimension
+                        pred_action_no_gripper = torch.cat([
+                            pred_action[..., :gripper_idx],
+                            pred_action[..., gripper_idx+1:]
+                        ], dim=-1)
+                        gt_action_no_gripper = torch.cat([
+                            gt_action[..., :gripper_idx],
+                            gt_action[..., gripper_idx+1:]
+                        ], dim=-1)
+                        mse_no_gripper = torch.nn.functional.mse_loss(
+                            pred_action_no_gripper, gt_action_no_gripper
+                        )
+                        
+                        # 3. MSE with binarized gripper
+                        pred_action_binarized = pred_action.clone()
+                        pred_gripper = pred_action[..., gripper_idx]
+                        pred_gripper_discrete = discretize_gripper_action_torch(pred_gripper)
+                        pred_action_binarized[..., gripper_idx] = pred_gripper_discrete
+                        
+                        mse_binarized = torch.nn.functional.mse_loss(
+                            pred_action_binarized, gt_action
+                        )
+                        
+                        # 4. Gripper-only MSE
+                        mse_gripper_only = torch.nn.functional.mse_loss(
+                            pred_action[..., gripper_idx],
+                            gt_action[..., gripper_idx]
+                        )
+                        
+                        # 5. Gripper accuracy (percentage of correct discrete predictions)
+                        gt_gripper_discrete = gt_action[..., gripper_idx]
+                        gripper_correct = (pred_gripper_discrete == gt_gripper_discrete).float()
+                        gripper_accuracy = gripper_correct.mean()
+                        
+                        # Print metrics
+                        print(f"\nTrain Action Metrics (Epoch {self.epoch}) - {action_dim}D (Arm + Gripper):")
+                        print(f"  Overall MSE:           {mse_overall.item():.6f}")
+                        print(f"  MSE (no gripper):      {mse_no_gripper.item():.6f}")
+                        print(f"  MSE (binarized grip):  {mse_binarized.item():.6f}")
+                        print(f"  MSE (gripper only):    {mse_gripper_only.item():.6f}")
+                        print(f"  Gripper Accuracy:      {gripper_accuracy.item():.4f} ({100*gripper_accuracy.item():.2f}%)")
+                        
+                        # Log to wandb
+                        step_log["train_action_mse_overall"] = mse_overall.item()
+                        step_log["train_action_mse_no_gripper"] = mse_no_gripper.item()
+                        step_log["train_action_mse_binarized_gripper"] = mse_binarized.item()
+                        step_log["train_action_mse_gripper_only"] = mse_gripper_only.item()
+                        step_log["train_gripper_accuracy"] = gripper_accuracy.item()
+                        step_log["train_action_mse_error"] = mse_overall.item()  # Legacy
                     
                     del batch
                     del obs_dict
@@ -397,10 +413,6 @@ class TrainDP3Workspace:
                     del result
                     del pred_action
                     del mse_overall
-                    del mse_no_gripper
-                    del mse_binarized
-                    del mse_gripper_only
-                    del gripper_accuracy
 
             if env_runner is None:
                 step_log["test_mean_score"] = -train_loss
@@ -421,19 +433,15 @@ class TrainDP3Workspace:
                     new_key = key.replace("/", "_")
                     metric_dict[new_key] = value
 
-                # NOTE : Need to change this later 
+                # Handle missing test_mean_score
                 if 'test_mean_score' not in metric_dict:
-                    # Use validation loss as proxy if rollout hasn't run yet
                     if 'val_loss' in metric_dict:
                         metric_dict['test_mean_score'] = -metric_dict['val_loss']
                     else:
-                        # Use negative train loss as last resort
                         metric_dict['test_mean_score'] = -train_loss
 
-                # We can't copy the last checkpoint here
-                # since save_checkpoint uses threads.
+                # Save periodic checkpoints
                 if (self.epoch % 50 == 0):
-                    # Save checkpoint every 50 epochs
                     periodic_ckpt_path = os.path.join(self.output_dir, "checkpoints", f"epoch={self.epoch:04d}.ckpt")
                     self.save_checkpoint(path=periodic_ckpt_path)
 
@@ -535,26 +543,23 @@ class TrainDP3Workspace:
         
         self.load_checkpoint(path=lastest_ckpt_path)
 
-        dataset: BaseDataset
-        dataset = hydra.utils.instantiate(cfg.task.dataset)
-
-        assert isinstance(dataset, BaseDataset), print(
-            f"dataset must be BaseDataset, got {type(dataset)}"
-        )
+        # Load dataset
+        dataset: BaseDataset = hydra.utils.instantiate(cfg.task.dataset)
+        assert isinstance(dataset, BaseDataset), f"dataset must be BaseDataset, got {type(dataset)}"
 
         train_dataloader = DataLoader(dataset, **cfg.dataloader)
         normalizer = dataset.get_normalizer()
 
-        # configure validation dataset
+        # Configure validation dataset
         val_dataset = dataset.get_validation_dataset()
         val_dataloader = DataLoader(val_dataset, **cfg.val_dataloader)
 
-        
+        # Set normalizer
         self.model.set_normalizer(normalizer)
         if cfg.training.use_ema:
             self.ema_model.set_normalizer(normalizer)
         
-        
+        # Select policy
         policy = self.model
         if cfg.training.use_ema:
             policy = self.ema_model
@@ -563,7 +568,7 @@ class TrainDP3Workspace:
         policy.eval()
         policy.cuda()
 
-        # DEBUG: Verify normalizer is set correctly
+        # Verify normalizer
         cprint("=" * 50, "yellow")
         cprint("NORMALIZER KEYS:", "yellow")
         cprint(f"{list(policy.normalizer.params_dict.keys())}", "yellow")
@@ -573,8 +578,6 @@ class TrainDP3Workspace:
             cfg.task.env_runner, output_dir=self.output_dir
         )
         assert isinstance(env_runner, BaseRunner)
-
-
 
         # ========== VALIDATION: GT vs PRED ACTIONS ==========
         cprint("=" * 50, "magenta")
@@ -609,27 +612,22 @@ class TrainDP3Workspace:
         all_gt_actions = np.concatenate(all_gt_actions, axis=0)  # (N, T, action_dim)
         all_pred_actions = np.concatenate(all_pred_actions, axis=0)  # (N, T, action_dim)
         
-        # Create output directory for action comparisons
+        # Create output directory
         action_comparison_dir = os.path.join(self.output_dir, "action_comparisons")
         os.makedirs(action_comparison_dir, exist_ok=True)
         
-        # Save GT and Pred actions
-        gt_actions_path = os.path.join(action_comparison_dir, "gt_actions.txt")
-        pred_actions_path = os.path.join(action_comparison_dir, "pred_actions.txt")
-        
         # Save with timestamp
         timestamp = time.strftime("%Y%m%d_%H%M%S")
-        gt_actions_path_ts = os.path.join(action_comparison_dir, f"gt_actions_{timestamp}.txt")
-        pred_actions_path_ts = os.path.join(action_comparison_dir, f"pred_actions_{timestamp}.txt")
+        gt_actions_path = os.path.join(action_comparison_dir, f"gt_actions_{timestamp}.txt")
+        pred_actions_path = os.path.join(action_comparison_dir, f"pred_actions_{timestamp}.txt")
         
         # Save arrays
         np.savetxt(gt_actions_path, all_gt_actions.reshape(-1, all_gt_actions.shape[-1]), 
                 fmt='%.6f', header=f'Shape: {all_gt_actions.shape}')
         np.savetxt(pred_actions_path, all_pred_actions.reshape(-1, all_pred_actions.shape[-1]), 
                 fmt='%.6f', header=f'Shape: {all_pred_actions.shape}')
-
         
-        # Calculate and save statistics
+        # Calculate statistics
         mse_per_dim = np.mean((all_gt_actions - all_pred_actions) ** 2, axis=(0, 1))
         mae_per_dim = np.mean(np.abs(all_gt_actions - all_pred_actions), axis=(0, 1))
         overall_mse = np.mean((all_gt_actions - all_pred_actions) ** 2)
@@ -658,9 +656,7 @@ class TrainDP3Workspace:
         cprint(f"Overall MAE: {overall_mae:.6f}", "green")
         cprint("=" * 50, "green")
         
-        # ========== END VALIDATION ==========
-
-        # Run evaluation on environment
+        # Run environment evaluation
         cprint(f"Running evaluation with policy...", "green")
         runner_log = env_runner.run(policy, dataset=dataset)
 
