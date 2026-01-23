@@ -52,12 +52,12 @@ def discretize_gripper_action(gripper_value):
 
 class UR5PyBulletRunner(BaseRunner):
     """
-    Extended runner with support for 6D (arm only) and 7D (arm + gripper) actions
+    Extended runner with DISCRETE GRIPPER ACTIONS
     
-    Key features:
-    1. Handles both 6D and 7D action spaces
-    2. Gripper actions are discretized to {-1, 0, 1} when present
-    3. Skips gripper comparison when action_dim=6
+    Key changes:
+    1. Gripper actions are discretized to {-1, 0, 1} before execution
+    2. GT actions are already discrete from dataset
+    3. Comparison is done on discrete values
     """
 
     def __init__(
@@ -89,12 +89,6 @@ class UR5PyBulletRunner(BaseRunner):
         self.tqdm_interval_sec = tqdm_interval_sec
         self.action_dim = action_dim
         self.num_points = num_points
-        
-        # NEW: Determine if gripper is included
-        self.include_gripper = (action_dim == 7 or action_dim == 13)
-        
-        cprint(f"Runner initialized with action_dim={action_dim}", "cyan")
-        cprint(f"Include gripper: {self.include_gripper}", "cyan")
 
         # Environment factory function
         def env_fn():
@@ -137,16 +131,12 @@ class UR5PyBulletRunner(BaseRunner):
         all_returns_test = []
         all_success_rates_test = []
 
-        log_dir = os.path.join(self.output_dir, "action_comparisons")
+        log_dir = os.path.join(self.output_dir, "gripper_comparisons")
         os.makedirs(log_dir, exist_ok=True)
 
         # Create timestamped log file
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
-        if self.include_gripper:
-            log_file_path = os.path.join(log_dir, f"gripper_gt_vs_pred_{timestamp}.txt")
-        else:
-            log_file_path = os.path.join(log_dir, f"arm_only_gt_vs_pred_{timestamp}.txt")
+        log_file_path = os.path.join(log_dir, f"gripper_gt_vs_pred_{timestamp}.txt")
         
         cprint(f"Logging to: {log_file_path}", "cyan")
 
@@ -233,8 +223,6 @@ class UR5PyBulletRunner(BaseRunner):
                     log_file.write(f"GT trajectory length: {len(gt_actions)} timesteps\n")
                 log_file.write(f"n_action_steps: {self.n_action_steps}\n")
                 log_file.write(f"n_obs_steps: {self.n_obs_steps}\n")
-                log_file.write(f"action_dim: {self.action_dim}\n")
-                log_file.write(f"include_gripper: {self.include_gripper}\n")
                 log_file.write("\n")
 
             # Reset environment with specified or random cube position
@@ -265,9 +253,10 @@ class UR5PyBulletRunner(BaseRunner):
             done = False
 
             # Storage for this episode's comparisons
-            episode_gt_actions = []
-            episode_pred_actions = []
-            episode_pred_actions_discrete = []
+            episode_gt_grippers = []
+            episode_pred_grippers = []
+            episode_pred_grippers_discrete = []
+            episode_actual_grippers = []
 
             gt_timestep = 0  
 
@@ -388,14 +377,13 @@ class UR5PyBulletRunner(BaseRunner):
                 if step_id == 0 and episode_id == 0:
                     cprint(f"Final action shape for env.step(): {action.shape}", "cyan")
 
-                # CRITICAL: Discretize gripper actions if included
+                # CRITICAL: Discretize gripper actions before execution
                 action_discrete = action.copy()
-                if self.include_gripper:
-                    for i in range(len(action_discrete)):
-                        gripper_idx = 6 if action_discrete.shape[1] == 7 else 12
-                        gripper_continuous = action_discrete[i, gripper_idx]
-                        gripper_discrete = discretize_gripper_action(gripper_continuous)
-                        action_discrete[i, gripper_idx] = gripper_discrete
+                for i in range(len(action_discrete)):
+                    gripper_idx = 6 if action_discrete.shape[1] == 7 else 12
+                    gripper_continuous = action_discrete[i, gripper_idx]
+                    gripper_discrete = discretize_gripper_action(gripper_continuous)
+                    action_discrete[i, gripper_idx] = gripper_discrete
 
                 if gt_actions is not None:
                     # Get the corresponding GT actions that will be executed
@@ -407,49 +395,49 @@ class UR5PyBulletRunner(BaseRunner):
                         pred_actions_continuous = action[:len(gt_actions_to_execute)]
                         pred_actions_discrete = action_discrete[:len(gt_actions_to_execute)]
                         
-                        # Log comparison based on whether gripper is included
-                        if self.include_gripper:
-                            # Extract gripper values (index 6 or 12)
-                            gripper_idx = 6 if gt_actions.shape[1] == 7 else 12
-                            gt_grippers = gt_actions_to_execute[:, gripper_idx]
-                            pred_grippers_continuous = pred_actions_continuous[:, gripper_idx]
-                            pred_grippers_discrete = pred_actions_discrete[:, gripper_idx]
+                        # Extract gripper values (index 6 or 12)
+                        gripper_idx = 6 if gt_actions.shape[1] == 7 else 12
+                        gt_grippers = gt_actions_to_execute[:, gripper_idx]
+                        pred_grippers_continuous = pred_actions_continuous[:, gripper_idx]
+                        pred_grippers_discrete = pred_actions_discrete[:, gripper_idx]
+                        
+                        # Print comparison for ALL actions that will be executed
+                        # cprint(f"\n{'='*80}", "cyan")
+                        # cprint(f"Episode {episode_id}, Policy Step {step_id} (GT Timesteps {gt_start_idx} to {gt_end_idx-1}):", "cyan")
+                        # cprint(f"Executing {len(gt_grippers)} actions:", "cyan")
+                        
+                        for i in range(len(gt_grippers)):
+                            actual_gt_timestep = gt_start_idx + i
+                            # cprint(f"  [{i}] GT Timestep {actual_gt_timestep}:", "white")
+                            # cprint(f"      GT Gripper:        {gt_grippers[i]:.6f}", "green")
+                            # cprint(f"      Pred Continuous:   {pred_grippers_continuous[i]:.6f}", "yellow")
+                            # cprint(f"      Pred Discrete:     {pred_grippers_discrete[i]:.6f}", "magenta")
+                            # cprint(f"      Diff (GT-Disc):    {abs(gt_grippers[i] - pred_grippers_discrete[i]):.6f}", "red")
+                        
+                            with open(log_file_path, 'a') as log_file:
+                                log_file.write(f"  Action [{i}] - GT Timestep {actual_gt_timestep}:\n")
+                                log_file.write(f"    GT Gripper:        {gt_grippers[i]:.6f}\n")
+                                log_file.write(f"    Pred Continuous:   {pred_grippers_continuous[i]:.6f}\n")
+                                log_file.write(f"    Pred Discrete:     {pred_grippers_discrete[i]:.6f}\n")
+                                log_file.write(f"    Diff (GT-Disc):    {abs(gt_grippers[i] - pred_grippers_discrete[i]):.6f}\n")
+                                log_file.write("\n")
                             
-                            for i in range(len(gt_grippers)):
-                                actual_gt_timestep = gt_start_idx + i
-                        
-                                with open(log_file_path, 'a') as log_file:
-                                    log_file.write(f"  Action [{i}] - GT Timestep {actual_gt_timestep}:\n")
-                                    log_file.write(f"    GT Gripper:        {gt_grippers[i]:.6f}\n")
-                                    log_file.write(f"    Pred Continuous:   {pred_grippers_continuous[i]:.6f}\n")
-                                    log_file.write(f"    Pred Discrete:     {pred_grippers_discrete[i]:.6f}\n")
-                                    log_file.write(f"    Diff (GT-Disc):    {abs(gt_grippers[i] - pred_grippers_discrete[i]):.6f}\n")
-                                    log_file.write("\n")
-                        else:
-                            # Log arm joints only (no gripper)
-                            for i in range(len(gt_actions_to_execute)):
-                                actual_gt_timestep = gt_start_idx + i
-                                gt_arm = gt_actions_to_execute[i, :6]
-                                pred_arm_continuous = pred_actions_continuous[i, :6]
-                                arm_mae = np.mean(np.abs(gt_arm - pred_arm_continuous))
-                                
-                                with open(log_file_path, 'a') as log_file:
-                                    log_file.write(f"  Action [{i}] - GT Timestep {actual_gt_timestep}:\n")
-                                    log_file.write(f"    GT Arm Joints:     {gt_arm}\n")
-                                    log_file.write(f"    Pred Arm Joints:   {pred_arm_continuous}\n")
-                                    log_file.write(f"    MAE (Arm):         {arm_mae:.6f}\n")
-                                    log_file.write("\n")
-                        
                         # Store for episode summary
-                        episode_gt_actions.extend(gt_actions_to_execute.tolist())
-                        episode_pred_actions.extend(pred_actions_continuous.tolist())
-                        episode_pred_actions_discrete.extend(pred_actions_discrete.tolist())
+                        episode_gt_grippers.extend(gt_grippers.tolist())
+                        episode_pred_grippers.extend(pred_grippers_continuous.tolist())
+                        episode_pred_grippers_discrete.extend(pred_grippers_discrete.tolist())
+                        
+                        cprint(f"{'='*80}\n", "cyan")
                     
                     # Update GT timestep counter
                     gt_timestep += self.n_action_steps
 
-                # Execute actions (discretized if gripper is included)
+                # Execute DISCRETIZED actions
                 obs, reward, done, info = self.env_test.step(action_discrete)
+                
+                # Get actual gripper state (normalized)
+                actual_gripper = self.env_test.env.env.robot.get_joint_positions()[6]
+                episode_actual_grippers.append(actual_gripper)
 
                 reward_sum += reward
                 done = np.all(done)
@@ -458,73 +446,39 @@ class UR5PyBulletRunner(BaseRunner):
                     break
 
             # Episode summary
-            if len(episode_gt_actions) > 0 and len(episode_pred_actions_discrete) > 0:
-                gt_arr = np.array(episode_gt_actions)
-                pred_continuous_arr = np.array(episode_pred_actions)
-                pred_discrete_arr = np.array(episode_pred_actions_discrete)
+            if len(episode_gt_grippers) > 0 and len(episode_pred_grippers_discrete) > 0:
+                gt_arr = np.array(episode_gt_grippers)
+                pred_continuous_arr = np.array(episode_pred_grippers)
+                pred_discrete_arr = np.array(episode_pred_grippers_discrete)
                 
-                if self.include_gripper:
-                    # Gripper-specific metrics
-                    gripper_idx = 6 if gt_arr.shape[1] == 7 else 12
-                    gt_grippers = gt_arr[:, gripper_idx]
-                    pred_continuous_grippers = pred_continuous_arr[:, gripper_idx]
-                    pred_discrete_grippers = pred_discrete_arr[:, gripper_idx]
-                    
-                    mae_gt_continuous = np.mean(np.abs(gt_grippers - pred_continuous_grippers))
-                    mae_gt_discrete = np.mean(np.abs(gt_grippers - pred_discrete_grippers))
-                    
-                    # Console output
-                    cprint(f"\n{'='*80}", "magenta")
-                    cprint(f"Episode {episode_id} Gripper Summary:", "magenta")
-                    cprint(f"  Total actions compared: {len(gt_arr)}", "magenta")
-                    cprint(f"  MAE (GT vs Pred Continuous): {mae_gt_continuous:.6f}", "magenta")
-                    cprint(f"  MAE (GT vs Pred Discrete):   {mae_gt_discrete:.6f}", "magenta")
-                    cprint(f"  GT Range:        [{gt_grippers.min():.6f}, {gt_grippers.max():.6f}]", "magenta")
-                    cprint(f"  Pred Cont Range: [{pred_continuous_grippers.min():.6f}, {pred_continuous_grippers.max():.6f}]", "magenta")
-                    cprint(f"  Pred Disc Range: [{pred_discrete_grippers.min():.6f}, {pred_discrete_grippers.max():.6f}]", "magenta")
-                    cprint(f"{'='*80}\n", "magenta")
-                    
-                    # File output
-                    with open(log_file_path, 'a') as log_file:
-                        log_file.write("\n" + "="*80 + "\n")
-                        log_file.write(f"EPISODE {episode_id} SUMMARY\n")
-                        log_file.write("="*80 + "\n")
-                        log_file.write(f"Total actions compared: {len(gt_arr)}\n")
-                        log_file.write(f"MAE (GT vs Pred Continuous): {mae_gt_continuous:.6f}\n")
-                        log_file.write(f"MAE (GT vs Pred Discrete):   {mae_gt_discrete:.6f}\n")
-                        log_file.write(f"GT Range:        [{gt_grippers.min():.6f}, {gt_grippers.max():.6f}]\n")
-                        log_file.write(f"Pred Cont Range: [{pred_continuous_grippers.min():.6f}, {pred_continuous_grippers.max():.6f}]\n")
-                        log_file.write(f"Pred Disc Range: [{pred_discrete_grippers.min():.6f}, {pred_discrete_grippers.max():.6f}]\n")
-                        log_file.write(f"Reward:          {reward_sum:.2f}\n")
-                        log_file.write(f"Success:         {self.env_test.env.is_success()}\n")
-                        log_file.write("="*80 + "\n\n\n")
-                else:
-                    # Arm-only metrics (no gripper)
-                    gt_arm = gt_arr[:, :6]
-                    pred_arm = pred_continuous_arr[:, :6]
-                    
-                    mae_per_joint = np.mean(np.abs(gt_arm - pred_arm), axis=0)
-                    mae_overall = np.mean(np.abs(gt_arm - pred_arm))
-                    
-                    # Console output
-                    cprint(f"\n{'='*80}", "magenta")
-                    cprint(f"Episode {episode_id} Arm Joints Summary:", "magenta")
-                    cprint(f"  Total actions compared: {len(gt_arr)}", "magenta")
-                    cprint(f"  MAE (Overall):          {mae_overall:.6f}", "magenta")
-                    cprint(f"  MAE per joint:          {mae_per_joint}", "magenta")
-                    cprint(f"{'='*80}\n", "magenta")
-                    
-                    # File output
-                    with open(log_file_path, 'a') as log_file:
-                        log_file.write("\n" + "="*80 + "\n")
-                        log_file.write(f"EPISODE {episode_id} SUMMARY\n")
-                        log_file.write("="*80 + "\n")
-                        log_file.write(f"Total actions compared: {len(gt_arr)}\n")
-                        log_file.write(f"MAE (Overall):          {mae_overall:.6f}\n")
-                        log_file.write(f"MAE per joint:          {mae_per_joint}\n")
-                        log_file.write(f"Reward:                 {reward_sum:.2f}\n")
-                        log_file.write(f"Success:                {self.env_test.env.is_success()}\n")
-                        log_file.write("="*80 + "\n\n\n")
+                mae_gt_continuous = np.mean(np.abs(gt_arr - pred_continuous_arr))
+                mae_gt_discrete = np.mean(np.abs(gt_arr - pred_discrete_arr))
+                
+                # Console output
+                cprint(f"\n{'='*80}", "magenta")
+                cprint(f"Episode {episode_id} Gripper Summary:", "magenta")
+                cprint(f"  Total actions compared: {len(gt_arr)}", "magenta")
+                cprint(f"  MAE (GT vs Pred Continuous): {mae_gt_continuous:.6f}", "magenta")
+                cprint(f"  MAE (GT vs Pred Discrete):   {mae_gt_discrete:.6f}", "magenta")
+                cprint(f"  GT Range:        [{gt_arr.min():.6f}, {gt_arr.max():.6f}]", "magenta")
+                cprint(f"  Pred Cont Range: [{pred_continuous_arr.min():.6f}, {pred_continuous_arr.max():.6f}]", "magenta")
+                cprint(f"  Pred Disc Range: [{pred_discrete_arr.min():.6f}, {pred_discrete_arr.max():.6f}]", "magenta")
+                cprint(f"{'='*80}\n", "magenta")
+                
+                # File output
+                with open(log_file_path, 'a') as log_file:
+                    log_file.write("\n" + "="*80 + "\n")
+                    log_file.write(f"EPISODE {episode_id} SUMMARY\n")
+                    log_file.write("="*80 + "\n")
+                    log_file.write(f"Total actions compared: {len(gt_arr)}\n")
+                    log_file.write(f"MAE (GT vs Pred Continuous): {mae_gt_continuous:.6f}\n")
+                    log_file.write(f"MAE (GT vs Pred Discrete):   {mae_gt_discrete:.6f}\n")
+                    log_file.write(f"GT Range:        [{gt_arr.min():.6f}, {gt_arr.max():.6f}]\n")
+                    log_file.write(f"Pred Cont Range: [{pred_continuous_arr.min():.6f}, {pred_continuous_arr.max():.6f}]\n")
+                    log_file.write(f"Pred Disc Range: [{pred_discrete_arr.min():.6f}, {pred_discrete_arr.max():.6f}]\n")
+                    log_file.write(f"Reward:          {reward_sum:.2f}\n")
+                    log_file.write(f"Success:         {self.env_test.env.is_success()}\n")
+                    log_file.write("="*80 + "\n\n\n")
 
             all_returns_test.append(reward_sum)
             all_success_rates_test.append(self.env_test.env.is_success())
