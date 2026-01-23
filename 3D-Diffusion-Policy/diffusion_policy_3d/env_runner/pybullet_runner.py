@@ -48,13 +48,14 @@ class UR5PyBulletRunner(BaseRunner):
         fps=10,
         crf=22,
         tqdm_interval_sec=5.0,
-        use_gui=False,
+        use_gui=True,
         num_points=6000,
         image_size=224,
         use_workspace_crop=True,
         workspace_std=30.0,
         action_dim=7,
-        capture_table=False
+        capture_table=False , 
+        eval_mode=True
     ):
         super().__init__(output_dir)
 
@@ -79,6 +80,7 @@ class UR5PyBulletRunner(BaseRunner):
                         workspace_std=workspace_std,
                         action_dim=self.action_dim,
                         capture_table=capture_table,
+                        eval_mode=self.eval_mode
                     )
                 ),
                 n_obs_steps=n_obs_steps,
@@ -160,6 +162,9 @@ class UR5PyBulletRunner(BaseRunner):
                             f"Episode {episode_id}: Using cube position from val dataset: {cube_start_pos}",
                             "green",
                         )
+                        
+                        # cube_start_pos = None
+                        # cube_start_orn = None
 
                        # Get ground truth actions for this episode
                         episode_data = dataset.get_episode(val_ep_idx)

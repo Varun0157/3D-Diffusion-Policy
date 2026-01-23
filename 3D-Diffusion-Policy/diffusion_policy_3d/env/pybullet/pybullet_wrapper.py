@@ -318,12 +318,21 @@ class UR5Robotiq85:
         Set gripper using normalized value [0, 1] with interpolation
         MATCHES DATA COLLECTION APPROACH
         
+        In eval mode, normalized_gripper_value may exceed 1.0 to allow
+        the gripper to open beyond the typical 0.35 rad limit.
+        
         Args:
-            normalized_gripper_value: Target gripper in [0, 1] range
+            normalized_gripper_value: Target gripper in [0, 1+] range
         """
-        # Convert normalized [0, 1] to raw angle [0, 0.35]
+        # Convert normalized value to raw angle
+        # In eval mode, this may exceed 0.35
         target_angle = normalized_gripper_value * 0.35
-        print(f"Setting gripper to target angle: {target_angle}")
+        
+        # Log if exceeding normal range
+        if normalized_gripper_value > 1.0:
+            cprint(f"EVAL MODE: Gripper exceeding normal range! Normalized: {normalized_gripper_value:.4f}, Raw angle: {target_angle:.4f}", "magenta")
+        
+        print(f"Setting gripper to target angle: {target_angle:.4f}")
                 
         # Control parent joint
         p.setJointMotorControl2(
@@ -346,11 +355,10 @@ class UR5Robotiq85:
                 force=1500,
                 maxVelocity=1.0
             )
-        
-        # Step simulation
-        for _ in range(250):  
-            p.stepSimulation()
-
+    
+    # Step simulation
+    for _ in range(250):  
+        p.stepSimulation()
 
             
     def set_joint_positions(self, joint_positions):
@@ -673,7 +681,7 @@ class UR5PickPlaceEnv(gym.Env):
         info = {"is_success": self.is_success_flag}
         return obs, reward, done, info
     
-    
+
     def _get_obs(self):
         """Get current observation"""
         robot_state = self.robot.get_robot_state()
