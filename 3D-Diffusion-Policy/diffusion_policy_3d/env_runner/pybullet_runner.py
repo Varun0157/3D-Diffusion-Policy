@@ -68,6 +68,8 @@ class UR5PyBulletRunner(BaseRunner):
         self.action_dim = action_dim
         self.num_points = num_points
 
+        self.eval_mode = eval_mode
+
         # Environment factory function
         def env_fn():
             return MultiStepWrapper(
