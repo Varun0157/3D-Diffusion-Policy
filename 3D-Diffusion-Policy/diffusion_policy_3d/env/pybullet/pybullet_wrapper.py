@@ -269,6 +269,9 @@ class UR5Robotiq85:
         # Get raw gripper angle
         raw_gripper_angle = p.getJointState(self.id, self.mimic_parent_id)[0]
 
+        print("After setting : ", raw_gripper_angle)
+        print()
+        
         # 1. Apply noise threshold (MATCHES DATA COLLECTION)
         if abs(raw_gripper_angle) < 1e-3:
             raw_gripper_angle = 0.0
@@ -357,7 +360,7 @@ class UR5Robotiq85:
             )
     
         # Step simulation
-        for _ in range(250):  
+        for _ in range(750):  
             p.stepSimulation()
 
             
@@ -620,17 +623,20 @@ class UR5PickPlaceEnv(gym.Env):
             raw_gripper_delta = gripper_delta * 0.35
             
             # Check condition: state >= 0.5 and action >= 0
-            if current_gripper_normalized >= 0.5 and gripper_delta >= 0:
-                # Add 0.01 to raw delta
-                raw_gripper_delta += 0.01
-                cprint(f"EVAL MODE: Added 0.01 to gripper delta. New raw delta: {raw_gripper_delta:.4f}", "cyan")
+            if current_gripper_normalized >= 0.5 and gripper_delta >= -0.02:
+                # Add 0.02 to raw delta
+                if(gripper_delta>=0):
+                    raw_gripper_delta += 0.04
+                else : 
+                    raw_gripper_delta += 0.05
+                cprint(f"EVAL MODE: Added {raw_gripper_delta:.4f} to gripper delta. New raw delta: {raw_gripper_delta:.4f}", "cyan")
             
             # Compute target in raw space
             current_raw_gripper = current_gripper_normalized * 0.35
             target_raw_gripper = current_raw_gripper + raw_gripper_delta
             
             # Allow exceeding 0.35 when condition is met
-            if current_gripper_normalized >= 0.5 and gripper_delta >= 0:
+            if current_gripper_normalized >= 0.35 and gripper_delta >= -0.02:
                 # Don't cap at 0.35 - let it go higher
                 target_raw_gripper = max(0.0, target_raw_gripper)  # Only prevent negative
                 cprint(f"EVAL MODE: Allowing gripper to exceed 0.35. Target raw: {target_raw_gripper:.4f}", "yellow")
@@ -656,7 +662,7 @@ class UR5PickPlaceEnv(gym.Env):
 
         time.sleep(0.55)
 
-        print(f"Actual gripper pos reached : {self.robot.get_joint_positions()[6]}\n\n")
+        # print(f"Actual gripper pos reached : {self.robot.get_joint_positions()[6]}\n\n")
 
         obs = self._get_obs()
 
