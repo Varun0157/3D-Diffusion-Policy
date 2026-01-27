@@ -358,6 +358,13 @@ class DP3(BasePolicy):
 
         loss = F.mse_loss(pred, target, reduction='none')
         loss = loss * loss_mask.type(loss.dtype)
+        
+        # Compute per-dimension loss (averaged across batch and time)
+        # loss shape: (batch_size, horizon, action_dim)
+        action_dim = loss.shape[-1]
+        per_dim_loss = loss.mean(dim=(0, 1))  # Average over batch and time, keep action dims
+        
+        # Total loss (original computation)
         loss = reduce(loss, 'b ... -> b (...)', 'mean')
         loss = loss.mean()
         
@@ -365,6 +372,10 @@ class DP3(BasePolicy):
         loss_dict = {
                 'bc_loss': loss.item(),
             }
+        
+        # Add per-dimension losses to loss_dict
+        for dim_idx in range(action_dim):
+            loss_dict[f'loss_action_dim_{dim_idx}'] = per_dim_loss[dim_idx].item()
 
         # print(f"t2-t1: {t2-t1:.3f}")
         # print(f"t3-t2: {t3-t2:.3f}")

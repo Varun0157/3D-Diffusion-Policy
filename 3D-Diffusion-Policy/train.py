@@ -7,8 +7,11 @@ if __name__ == "__main__":
     sys.path.append(ROOT_DIR)
     os.chdir(ROOT_DIR)
 
-import os
 import hydra
+import os
+import json
+import time
+from datetime import datetime
 import torch
 import dill
 from omegaconf import OmegaConf
@@ -124,6 +127,31 @@ class TrainDP3Workspace:
 
         train_dataloader = DataLoader(dataset, **cfg.dataloader)
         normalizer = dataset.get_normalizer()
+        
+        # Create logging directory for normalization logs
+    
+        norm_log_dir = pathlib.Path(self.output_dir) / "normalization_logs"
+        print("Path to normalization logs:", norm_log_dir)
+        norm_log_dir.mkdir(parents=True, exist_ok=True)
+        norm_log_file = norm_log_dir / f"action_normalization_epoch_{self.epoch}.log"
+        
+        # Log normalizer statistics
+        with open(norm_log_file, 'w') as f:
+            f.write(f"Normalization Statistics - Epoch {self.epoch}\n")
+            f.write(f"Timestamp: {datetime.now()}\n")
+            f.write("="*80 + "\n\n")
+            f.write("Normalizer Input Stats (Raw Data Statistics):\n")
+            input_stats = normalizer.get_input_stats()
+            for key, stats in input_stats.items():
+                f.write(f"\n{key}:\n")
+                for stat_name, stat_value in stats.items():
+                    if hasattr(stat_value, 'shape'):
+                        f.write(f"  {stat_name}: shape={stat_value.shape}, values={stat_value}\n")
+                    else:
+                        f.write(f"  {stat_name}: {stat_value}\n")
+            f.write("\n" + "="*80 + "\n\n")
+        
+        print(f"Normalization log will be saved to: {norm_log_file}")
 
         # configure validation dataset
         val_dataset = dataset.get_validation_dataset()
@@ -209,6 +237,43 @@ class TrainDP3Workspace:
                     batch = dict_apply(batch, lambda x: x.to(device, non_blocking=True))
                     if train_sampling_batch is None:
                         train_sampling_batch = batch
+                    
+                    # Log normalization for first batch and then every 50 batches
+                    if batch_idx == 0 or batch_idx % 50 == 0:
+                        with open(norm_log_file, 'a') as f:
+                            f.write(f"\nBatch {batch_idx} - Action Normalization Details:\n")
+                            f.write("="*80 + "\n\n")
+                            
+                            # Log raw actions (before normalization)
+                            raw_actions = batch['action'].cpu().numpy()
+                            f.write(f"RAW ACTIONS (Before Normalization):\n")
+                            f.write(f"  Shape: {raw_actions.shape}\n")
+                            f.write(f"  Min: {raw_actions.min(axis=(0,1))}\n")
+                            f.write(f"  Max: {raw_actions.max(axis=(0,1))}\n")
+                            f.write(f"  Mean: {raw_actions.mean(axis=(0,1))}\n")
+                            f.write(f"  Std: {raw_actions.std(axis=(0,1))}\n")
+                            
+                            # Show first 20 samples (or all if batch is smaller)
+                            num_samples = min(20, raw_actions.shape[0])
+                            f.write(f"\n  First {num_samples} samples (showing first timestep of each):\n")
+                            for sample_idx in range(num_samples):
+                                f.write(f"    Sample {sample_idx}: {raw_actions[sample_idx, 0, :]}\n")
+                            
+                            # Normalize and log normalized actions
+                            normalized_actions = normalizer['action'].normalize(batch['action']).cpu().numpy()
+                            f.write(f"\nNORMALIZED ACTIONS (After Normalization):\n")
+                            f.write(f"  Shape: {normalized_actions.shape}\n")
+                            f.write(f"  Min: {normalized_actions.min(axis=(0,1))}\n")
+                            f.write(f"  Max: {normalized_actions.max(axis=(0,1))}\n")
+                            f.write(f"  Mean: {normalized_actions.mean(axis=(0,1))}\n")
+                            f.write(f"  Std: {normalized_actions.std(axis=(0,1))}\n")
+                            
+                            # Show first 20 samples (or all if batch is smaller)
+                            f.write(f"\n  First {num_samples} samples (showing first timestep of each):\n")
+                            for sample_idx in range(num_samples):
+                                f.write(f"    Sample {sample_idx}: {normalized_actions[sample_idx, 0, :]}\n")
+                            f.write("\n" + "="*80 + "\n")
+                            f.flush()  # Flush to disk to avoid buffer issues
 
                     # compute loss
                     t1_1 = time.time()
@@ -803,7 +868,7 @@ class TrainDP3Workspace:
     ),
 )
 def main(cfg):
-    workspace = TrainDP3Workspace(cfg)
+    workspace = TrainDP3Workspace(cfg,"/scratch2/cross-emb/nitin_logs/DP3_outputs/")
     workspace.run()
 
 

@@ -44,3 +44,6 @@ personal_TASK.md
 easytrain.sh
 nohup.out
 output/
+
+third_party/vrl3_ckpts/
+env_pc.ply  

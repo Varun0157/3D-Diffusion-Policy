@@ -5,7 +5,7 @@ task_name: pick_place
 shape_meta: &shape_meta # acceptable types: rgb, low_dim
   obs:
     point_cloud:
-      shape: [6000, 3]
+      shape: [6000, 6]
       type: point_cloud
     agent_pos:
       shape: [7]
@@ -26,7 +26,7 @@ env_runner:
 
 dataset:
   _target_: diffusion_policy_3d.dataset.droid_dataset.DroidDataset # same format as droid dataset
-  zarr_path: data/final_velocity.zarr
+  zarr_path: /home/cross-emb/nitin_exp/3D-Diffusion-Policy/3D-Diffusion-Policy/data/final_velocity.zarr
   horizon: ${horizon}
   pad_before: ${eval:'${n_obs_steps}-1'}
   pad_after: ${eval:'${n_action_steps}-1'}
