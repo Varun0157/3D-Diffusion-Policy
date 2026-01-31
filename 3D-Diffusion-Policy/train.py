@@ -803,7 +803,7 @@ class TrainDP3Workspace:
     ),
 )
 def main(cfg):
-    workspace = TrainDP3Workspace(cfg)
+    workspace = TrainDP3Workspace(cfg,"/scratch2/cross-emb/nitin_logs/DP3_outputs/actions_absolute_joints")
     workspace.run()
 
 

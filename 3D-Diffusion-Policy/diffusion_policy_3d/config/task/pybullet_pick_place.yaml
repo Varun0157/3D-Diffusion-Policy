@@ -26,7 +26,7 @@ env_runner:
 
 dataset:
   _target_: diffusion_policy_3d.dataset.droid_dataset.DroidDataset # same format as droid dataset
-  zarr_path: data/final_velocity.zarr
+  zarr_path: data/final_velocity_absolute_joint_state_actions.zarr
   horizon: ${horizon}
   pad_before: ${eval:'${n_obs_steps}-1'}
   pad_after: ${eval:'${n_action_steps}-1'}

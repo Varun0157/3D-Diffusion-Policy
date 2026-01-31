@@ -136,14 +136,14 @@ checkpoint:
   save_last_snapshot: False
 
 multi_run:
-  run_dir: /scratch2/cross-emb/DP3_outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
+  run_dir: /scratch2/cross-emb/nitin_logs/DP3_outputs/actions_absolute_joints/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
   wandb_name_base: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_name}
 
 hydra:
   job:
     override_dirname: ${name}
   run:
-    dir: /scratch2/cross-emb/DP3_outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
+    dir: /scratch2/cross-emb/nitin_logs/DP3_outputs/actions_absolute_joints/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
   sweep:
-    dir: /scratch2/cross-emb/DP3_outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
+    dir: /scratch2/cross-emb/nitin_logs/DP3_outputs/actions_absolute_joints/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
     subdir: ${hydra.job.num}

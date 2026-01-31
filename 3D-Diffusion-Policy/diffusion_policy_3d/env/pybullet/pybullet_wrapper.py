@@ -476,8 +476,20 @@ class UR5PickPlaceEnv(gym.Env):
         self.cube_start_pos = None
 
         # Define action and observation spaces
+        # Action space uses absolute joint positions (not deltas)
+        limits_lower, limits_upper = self.robot.get_joint_limits(include_gripper=self.include_gripper)
+        
+        # For action spaces, construct appropriate bounds
+        if self.include_gripper:
+            # Last dimension is gripper velocity command [-1, 1]
+            action_low = np.concatenate([limits_lower[:-1], [-1.0]])
+            action_high = np.concatenate([limits_upper[:-1], [1.0]])
+        else:
+            action_low = np.array(limits_lower)
+            action_high = np.array(limits_upper)
+        
         self.action_space = spaces.Box(
-            low=-0.1, high=0.1, shape=(self.action_dim,), dtype=np.float32
+            low=action_low, high=action_high, shape=(self.action_dim,), dtype=np.float32
         )
 
         self.observation_space = spaces.Dict(
@@ -590,25 +602,30 @@ class UR5PickPlaceEnv(gym.Env):
         
         Args:
             action: Action array. Can be:
-                - 6D: [arm_deltas(6)] - arm only, no gripper
-                - 7D: [arm_deltas(6), gripper_velocity_cmd(1)]
-                - 13D: [eef_delta(6), arm_deltas(6), gripper_velocity_cmd(1)]
+                - 6D: [arm_absolute_joints(6)] - arm only, no gripper
+                - 7D: [arm_absolute_joints(6), gripper_velocity_cmd(1)]
+                - 13D: [eef_delta(6), arm_absolute_joints(6), gripper_velocity_cmd(1)]
+                
+        Note: Arm joints are now ABSOLUTE positions (not deltas).
+              Gripper command remains velocity-based: {-1.0, 0.0, 1.0}
         """
         self.current_step += 1
 
         # Handle different action dimensions
         if len(action) == 13:
-            joint_deltas = action[6:13]
-            arm_deltas = joint_deltas[:6]
+            # 13D: [eef_delta(6), arm_absolute_joints(6), gripper_cmd(1)]
+            # EEF deltas are ignored in current implementation
+            arm_absolute = action[6:12]
             if self.include_gripper:
-                gripper_velocity_cmd = joint_deltas[6]
+                gripper_velocity_cmd = action[12]
         elif len(action) == 7:
-            arm_deltas = action[:6]
+            # 7D: [arm_absolute_joints(6), gripper_cmd(1)]
+            arm_absolute = action[:6]
             if self.include_gripper:
                 gripper_velocity_cmd = action[6]
         elif len(action) == 6:
-            # 6D action - arm only, no gripper
-            arm_deltas = action[:6]
+            # 6D: [arm_absolute_joints(6)] - arm only, no gripper
+            arm_absolute = action[:6]
             gripper_velocity_cmd = None
         else:
             raise ValueError(f"Action must be 6D, 7D, or 13D, got {len(action)}D")
@@ -628,7 +645,9 @@ class UR5PickPlaceEnv(gym.Env):
         current_joint_pos = self.robot.get_joint_positions(include_gripper=self.include_gripper)
 
         # Update arm joints
-        target_arm = current_joint_pos[:6] + arm_deltas
+        # target_arm = current_joint_pos[:6] + arm_deltas
+         # Apply safety clamping to ensure actions are within joint limits
+        target_arm = np.clip(arm_absolute, self.robot.arm_lower_limits, self.robot.arm_upper_limits)
         self.robot.set_arm_joints(target_arm)
 
         # Update gripper if included
