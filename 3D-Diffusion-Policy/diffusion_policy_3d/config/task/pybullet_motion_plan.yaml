@@ -1,0 +1,45 @@
+name: motionplan_test
+
+task_name: motion_plan
+
+shape_meta: &shape_meta
+  obs:
+    point_cloud:
+      shape: [5000, 3]
+      type: point_cloud
+    agent_pos:
+      shape: [7]
+      type: low_dim
+    goal_eef_xyz:
+      shape: [3]
+      type: low_dim
+  action:
+    shape: [7]
+
+env_runner:
+  _target_: diffusion_policy_3d.env_runner.pybullet_runner.Lite6MotionPlanningRunner
+  n_test: 10
+  max_steps: 350
+  n_obs_steps: ${n_obs_steps}
+  n_action_steps: ${n_action_steps}
+  fps: 10
+  use_gui: false
+  num_points: ${eval:'${shape_meta.obs.point_cloud.shape}[0]'}
+  image_size: 224
+  action_dim: ${eval:'${shape_meta.action.shape}[0]'}
+  collision_terminate: false
+  success_threshold: 0.08
+  max_steps_per_waypoint: 2
+  waypoint_threshold: 0.01
+  urdf_path: null
+
+dataset:
+  _target_: diffusion_policy_3d.dataset.motion_plan_dataset.MotionPlanDataset
+  zarr_path: /home/nitin/Desktop/Research/robot-sim/rrc_sim_dataset_mp.zarr
+  horizon: ${horizon}
+  pad_before: ${eval:'${n_obs_steps}-1'}
+  pad_after: ${eval:'${n_action_steps}-1'}
+  seed: 42
+  val_ratio: 0.02
+  max_train_episodes: null
+  task_name: motion_plan

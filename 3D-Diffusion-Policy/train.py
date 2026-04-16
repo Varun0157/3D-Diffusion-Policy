@@ -579,6 +579,18 @@ class TrainDP3Workspace:
         )
         assert isinstance(env_runner, BaseRunner)
 
+        # Eval mode: save all rollout videos locally (cam0+cam1 merged), do not upload videos to wandb.
+        if hasattr(env_runner, "save_local_videos"):
+            env_runner.save_local_videos = True
+        if hasattr(env_runner, "save_all_local_episodes"):
+            env_runner.save_all_local_episodes = True
+        if hasattr(env_runner, "merge_cams_side_by_side"):
+            env_runner.merge_cams_side_by_side = True
+        if hasattr(env_runner, "log_wandb_videos"):
+            env_runner.log_wandb_videos = False
+        if hasattr(env_runner, "local_video_dir"):
+            env_runner.local_video_dir = "eval_rollout_videos"
+
         # ========== VALIDATION: GT vs PRED ACTIONS ==========
         cprint("=" * 50, "magenta")
         cprint("Running validation to collect GT vs Pred actions...", "magenta")

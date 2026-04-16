@@ -2,6 +2,7 @@ from typing import Dict
 import torch
 import numpy as np
 import copy
+import zarr
 from diffusion_policy_3d.common.pytorch_util import dict_apply
 from diffusion_policy_3d.common.replay_buffer import ReplayBuffer
 from diffusion_policy_3d.common.sampler import (
@@ -9,7 +10,7 @@ from diffusion_policy_3d.common.sampler import (
 from diffusion_policy_3d.model.common.normalizer import LinearNormalizer, SingleFieldLinearNormalizer
 from diffusion_policy_3d.dataset.base_dataset import BaseDataset
 
-class RRCDataset(BaseDataset):
+class MotionPlanDataset(BaseDataset):
     def __init__(self,
             zarr_path,
             horizon=1,
@@ -22,8 +23,12 @@ class RRCDataset(BaseDataset):
             ):
         super().__init__()
         self.task_name = task_name
+        self.zarr_path = zarr_path
         self.replay_buffer = ReplayBuffer.copy_from_path(
-            zarr_path, keys=['state', 'action', 'point_cloud', 'img'])
+            zarr_path, keys=['state', 'action', 'point_cloud'])
+        self.zarr_root = zarr.open(zarr_path, mode='r')
+        self.end_configuration = self.zarr_root['data']['end_configuration'][:]
+        self.episode_ends = self.replay_buffer.episode_ends[:]
         val_mask = get_val_mask(
             n_episodes=self.replay_buffer.n_episodes,
             val_ratio=val_ratio,
@@ -58,10 +63,12 @@ class RRCDataset(BaseDataset):
         return val_set
 
     def get_normalizer(self, mode='limits', **kwargs):
+        goal_eef_xyz = self.end_configuration[:, 6:9]
         data = {
             'action': self.replay_buffer['action'],
             'agent_pos': self.replay_buffer['state'][...,:],
             'point_cloud': self.replay_buffer['point_cloud'],
+            'goal_eef_xyz': goal_eef_xyz,
         }
         normalizer = LinearNormalizer()
         normalizer.fit(data=data, last_n_dims=1, mode=mode, **kwargs)
@@ -70,15 +77,22 @@ class RRCDataset(BaseDataset):
 
     def __len__(self) -> int:
         return len(self.sampler)
+    def _get_episode_idx(self, buffer_start_idx:int)->int:
+        return int(np.searchsorted(self.episode_ends,buffer_start_idx,side='right'))
 
-    def _sample_to_data(self, sample):
+    def _sample_to_data(self, sample,idx:int):
         agent_pos = sample['state'][:,].astype(np.float32) # (T, 13)
         point_cloud = sample['point_cloud'][:,].astype(np.float32) # (T, 2500, 6)
+        buffer_start_idx = int(self.sampler.indices[idx,0])
+        episode_idx = self._get_episode_idx(buffer_start_idx)
+        goal_eef_xyz = self.end_configuration[episode_idx, 6:9].astype(np.float32)
+        goal_eef_xyz = np.repeat(goal_eef_xyz[None,:],agent_pos.shape[0],axis=0) # (T, 3)
 
         data = {
             'obs': {
                 'point_cloud': point_cloud, # T, 2500, 6
                 'agent_pos': agent_pos, # T, 13
+                'goal_eef_xyz': goal_eef_xyz, # T, 3
             },
             'action': sample['action'].astype(np.float32) # T, 13
         }
@@ -86,6 +100,6 @@ class RRCDataset(BaseDataset):
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         sample = self.sampler.sample_sequence(idx)
-        data = self._sample_to_data(sample)
+        data = self._sample_to_data(sample,idx)
         torch_data = dict_apply(data, torch.from_numpy)
         return torch_data

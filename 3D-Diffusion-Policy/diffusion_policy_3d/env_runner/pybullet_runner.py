@@ -5,7 +5,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 from termcolor import cprint
-from diffusion_policy_3d.env import UR5PickPlaceEnv
+from diffusion_policy_3d.env import UR5PickPlaceEnv, Lite6MotionPlanningEnv
 from diffusion_policy_3d.gym_util.multistep_wrapper import MultiStepWrapper
 from diffusion_policy_3d.gym_util.video_recording_wrapper import (
     SimpleVideoRecordingWrapper,
@@ -20,6 +20,7 @@ import open3d as o3d
 import numpy as np
 
 import wandb
+import cv2
 
 import os
 from datetime import datetime
@@ -581,5 +582,213 @@ class UR5PyBulletRunner(BaseRunner):
             _ = self.env_test.reset()
         except:
             pass
+
+        return log_data
+
+
+class Lite6MotionPlanningRunner(BaseRunner):
+    def __init__(
+        self,
+        output_dir,
+        n_test=5,
+        max_steps=350,
+        n_obs_steps=1,
+        n_action_steps=12,
+        fps=10,
+        use_gui=False,
+        num_points=5000,
+        image_size=224,
+        action_dim=7,
+        collision_terminate=False,
+        success_threshold=0.03,
+        max_steps_per_waypoint=10,
+        waypoint_threshold=0.01,
+        urdf_path=None,
+        log_wandb_videos=True,
+        save_local_videos=False,
+        save_all_local_episodes=False,
+        merge_cams_side_by_side=True,
+        local_video_dir="rollout_videos",
+    ):
+        super().__init__(output_dir)
+        self.episode_test = n_test
+        self.max_steps = max_steps
+        self.n_obs_steps = n_obs_steps
+        self.n_action_steps = n_action_steps
+        self.fps = fps
+        self.action_dim = action_dim
+        self.logger_util_test = logger_util.LargestKRecorder(K=3)
+        self.log_wandb_videos = log_wandb_videos
+        self.save_local_videos = save_local_videos
+        self.save_all_local_episodes = save_all_local_episodes
+        self.merge_cams_side_by_side = merge_cams_side_by_side
+        self.local_video_dir = local_video_dir
+
+        self.env_test = MultiStepWrapper(
+            Lite6MotionPlanningEnv(
+                use_gui=use_gui,
+                num_points=num_points,
+                image_size=image_size,
+                action_dim=action_dim,
+                max_steps=max_steps,
+                urdf_path=urdf_path,
+                collision_terminate=collision_terminate,
+                success_threshold=success_threshold,
+                max_steps_per_waypoint=max_steps_per_waypoint,
+                waypoint_threshold=waypoint_threshold,
+            ),
+            n_obs_steps=n_obs_steps,
+            n_action_steps=n_action_steps,
+            max_episode_steps=max_steps,
+            reward_agg_method="sum",
+        )
+
+    def _to_policy_obs(self, stacked_obs, policy, device):
+        policy_obs = {}
+        for key in policy.normalizer.params_dict.keys():
+            if key == "action":
+                continue
+            if key not in stacked_obs:
+                continue
+            tensor = torch.from_numpy(stacked_obs[key]).to(device=device, non_blocking=True)
+            policy_obs[key] = tensor.unsqueeze(0)
+        return policy_obs
+
+    def _write_rgb_video(self, frames, output_path):
+        if len(frames) == 0:
+            return False
+        h, w, _ = frames[0].shape
+        writer = cv2.VideoWriter(
+            output_path,
+            cv2.VideoWriter_fourcc(*"mp4v"),
+            max(1, int(self.fps)),
+            (w, h),
+        )
+        if not writer.isOpened():
+            return False
+        try:
+            for frame in frames:
+                writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+        finally:
+            writer.release()
+        return True
+
+    def _save_local_episode_videos(self, episode_id, cam0_frames, cam1_frames, collided):
+        out_dir = os.path.join(self.output_dir, self.local_video_dir)
+        os.makedirs(out_dir, exist_ok=True)
+        collision_tag = "collision" if collided else "non_collision"
+
+        if self.merge_cams_side_by_side:
+            merged_frames = [
+                np.concatenate([f0, f1], axis=1)
+                for f0, f1 in zip(cam0_frames, cam1_frames)
+            ]
+            merged_path = os.path.join(
+                out_dir,
+                f"episode_{episode_id:03d}_{collision_tag}_cam01_merged.mp4",
+            )
+            self._write_rgb_video(merged_frames, merged_path)
+            return [merged_path]
+
+        cam0_path = os.path.join(out_dir, f"episode_{episode_id:03d}_{collision_tag}_cam0.mp4")
+        cam1_path = os.path.join(out_dir, f"episode_{episode_id:03d}_{collision_tag}_cam1.mp4")
+        self._write_rgb_video(cam0_frames, cam0_path)
+        self._write_rgb_video(cam1_frames, cam1_path)
+        return [cam0_path, cam1_path]
+
+    def run(self, policy: BasePolicy, dataset=None):
+        device = policy.device
+        all_returns_test = []
+        all_success_rates_test = []
+        all_collision_rates_test = []
+        saved_local_videos = []
+
+        cam0_first_episode = []
+        cam1_first_episode = []
+
+        for episode_id in range(self.episode_test):
+            obs = self.env_test.reset()
+            policy.reset()
+
+            reward_sum = 0.0
+            done = False
+            step_id = 0
+
+            collect_frames = self.save_local_videos or (self.log_wandb_videos and episode_id == 0)
+            episode_cam0_frames = []
+            episode_cam1_frames = []
+            if collect_frames:
+                episode_cam0_frames.append(self.env_test.env.render_camera(0))
+                episode_cam1_frames.append(self.env_test.env.render_camera(1))
+
+            while (not done) and (step_id < self.max_steps):
+                policy_obs = self._to_policy_obs(obs, policy, device)
+
+                with torch.no_grad():
+                    action_dict = policy.predict_action(policy_obs)
+                action = dict_apply(action_dict, lambda x: x.detach().cpu().numpy())["action"]
+
+                if action.ndim == 3:
+                    action = action.squeeze(0)
+                elif action.ndim == 1:
+                    action = action[None, :]
+
+                action_seq = action[: self.n_action_steps]
+                obs, reward, done, info = self.env_test.step(action_seq)
+                reward_sum += float(reward)
+                step_id += int(action_seq.shape[0])
+
+                if collect_frames:
+                    episode_cam0_frames.append(self.env_test.env.render_camera(0))
+                    episode_cam1_frames.append(self.env_test.env.render_camera(1))
+
+            all_returns_test.append(reward_sum)
+            all_success_rates_test.append(1.0 if self.env_test.env.is_success() else 0.0)
+            all_collision_rates_test.append(1.0 if self.env_test.env.collision_flag else 0.0)
+
+            if self.log_wandb_videos and episode_id == 0 and len(episode_cam0_frames) > 0:
+                cam0_first_episode = episode_cam0_frames
+                cam1_first_episode = episode_cam1_frames
+
+            if self.save_local_videos and len(episode_cam0_frames) > 0:
+                if self.save_all_local_episodes or (episode_id == 0):
+                    saved_paths = self._save_local_episode_videos(
+                        episode_id=episode_id,
+                        cam0_frames=episode_cam0_frames,
+                        cam1_frames=episode_cam1_frames,
+                        collided=self.env_test.env.collision_flag,
+                    )
+                    saved_local_videos.extend(saved_paths)
+
+            cprint(
+                f"Lite6 Test Episode {episode_id}: Reward={reward_sum:.2f}, Success={self.env_test.env.is_success()}, Collision={self.env_test.env.collision_flag}",
+                "yellow",
+            )
+
+        sr_mean = float(np.mean(all_success_rates_test)) if len(all_success_rates_test) > 0 else 0.0
+        returns_mean = float(np.mean(all_returns_test)) if len(all_returns_test) > 0 else 0.0
+        collision_mean = float(np.mean(all_collision_rates_test)) if len(all_collision_rates_test) > 0 else 0.0
+        self.logger_util_test.record(sr_mean)
+
+        log_data = {
+            "mean_success_rates_test": sr_mean,
+            "mean_returns_test": returns_mean,
+            "mean_collision_rate_test": collision_mean,
+            "SR_test_L3": self.logger_util_test.average_of_largest_K(),
+            "test_mean_score": sr_mean,
+        }
+
+        if len(saved_local_videos) > 0:
+            cprint(f"Saved {len(saved_local_videos)} rollout videos to {os.path.join(self.output_dir, self.local_video_dir)}", "cyan")
+            log_data["local_rollout_video_dir_test"] = os.path.join(self.output_dir, self.local_video_dir)
+            log_data["local_rollout_video_count_test"] = int(len(saved_local_videos))
+
+        if self.log_wandb_videos and len(cam0_first_episode) > 0:
+            cam0 = np.stack(cam0_first_episode, axis=0)
+            cam1 = np.stack(cam1_first_episode, axis=0)
+            merged = np.concatenate([cam0, cam1], axis=2).transpose(0, 3, 1, 2)
+            log_data["sim_video_cam01_merged_test"] = wandb.Video(
+                merged.astype(np.uint8), fps=self.fps, format="mp4"
+            )
 
         return log_data

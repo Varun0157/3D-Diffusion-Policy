@@ -9,6 +9,7 @@ from termcolor import cprint
 from gym import spaces
 import random
 import time
+import os
 
 
 def compute_workspace_bounds(pc_xyz, n_std=30):
@@ -800,6 +801,518 @@ class UR5PickPlaceEnv(gym.Env):
 
     def seed(self, seed=None):
         """Set random seed"""
+        if seed is None:
+            seed = np.random.randint(0, 25536)
+        self._seed = seed
+        random.seed(seed)
+        np.random.seed(seed)
+
+
+_LITE6_MP_CAMERAS = [
+    {
+        "name": "thirdperson_cam00",
+        "eye": [0.6294, 0.9766, 1.3748],
+        "target": [0.20, 0.00, 0.75],
+        "up": [0.0, 0.0, 1.0],
+    },
+    {
+        "name": "thirdperson_cam01",
+        "eye": [0.8562, -0.5951, 1.4672],
+        "target": [0.20, 0.00, 0.75],
+        "up": [0.0, 0.0, 1.0],
+    },
+    {
+        "name": "thirdperson_cam02",
+        "eye": [-0.0628, 0.0000, 1.9990],
+        "target": [0.25, 0.00, 0.70],
+        "up": [0.0, 1.0, 0.0],
+    },
+]
+
+
+def _depth_to_point_cloud_base_frame(
+    depth_buffer,
+    view_matrix,
+    proj_matrix,
+    base_pos,
+    width=224,
+    height=224,
+):
+    u = np.arange(width)
+    v = np.arange(height)
+    u, v = np.meshgrid(u, v)
+
+    x_ndc = (2.0 * u / width) - 1.0
+    y_ndc = 1.0 - (2.0 * v / height)
+    z_ndc = 2.0 * depth_buffer - 1.0
+    ndc = np.stack([x_ndc, y_ndc, z_ndc, np.ones_like(z_ndc)], axis=-1).reshape(-1, 4)
+
+    view_np = np.array(view_matrix).reshape(4, 4).T
+    proj_np = np.array(proj_matrix).reshape(4, 4).T
+    inv_vp = np.linalg.inv(proj_np @ view_np)
+
+    world_homo = (inv_vp @ ndc.T).T
+    points_world = world_homo[:, :3] / world_homo[:, 3:4]
+    points_base = points_world - np.array(base_pos, dtype=np.float32)
+    return points_base
+
+
+def _normalize_point_count(points: np.ndarray, num_points: int):
+    if points.shape[0] == 0:
+        return np.zeros((num_points, 3), dtype=np.float32)
+    if points.shape[0] > num_points:
+        return downsample_with_fps(points.astype(np.float32, copy=False), num_points)
+    if points.shape[0] < num_points:
+        repeat_n = num_points // points.shape[0]
+        rem = num_points % points.shape[0]
+        tiled = np.tile(points, (repeat_n, 1))
+        if rem > 0:
+            tiled = np.concatenate([tiled, points[:rem]], axis=0)
+        return tiled.astype(np.float32, copy=False)
+    return points.astype(np.float32, copy=False)
+
+
+def create_static_box(position, half_extents, yaw=0.0, color=[0.8, 0.3, 0.3, 1]):
+    orientation_quat = p.getQuaternionFromEuler([0, 0, yaw])
+    collision_shape = p.createCollisionShape(p.GEOM_BOX, halfExtents=half_extents)
+    visual_shape = p.createVisualShape(p.GEOM_BOX, halfExtents=half_extents, rgbaColor=color)
+    return p.createMultiBody(
+        baseMass=0,
+        baseCollisionShapeIndex=collision_shape,
+        baseVisualShapeIndex=visual_shape,
+        basePosition=position,
+        baseOrientation=orientation_quat,
+    )
+
+
+def generate_task_obstacles(start_pos, goal_pos, obs_config):
+    obstacles = []
+    p_start = np.array(start_pos, dtype=np.float32)
+    p_goal = np.array(goal_pos, dtype=np.float32)
+    midpoint = p_start + 0.5 * (p_goal - p_start)
+
+    obs1_size_cfg = obs_config.get("obs1_size", [0.02, 0.15, 0.1])
+    max_y = obs1_size_cfg[1]
+    max_z = obs1_size_cfg[2]
+    size_1 = [
+        random.uniform(0.01, 0.03),
+        random.uniform(0.05, max_y - 0.1),
+        random.uniform(0.05, max_z),
+    ]
+    yaw_1 = random.uniform(-1.57 / 2, 1.57 / 2)
+    obstacles.append(
+        create_static_box(position=midpoint.tolist(), half_extents=size_1, yaw=yaw_1, color=[0.8, 0.2, 0.2, 1.0])
+    )
+
+    trap_strategy = random.choice(["horizontal_wall", "plate", "ignore"])
+    if trap_strategy == "ignore":
+        return obstacles
+
+    if trap_strategy == "horizontal_wall":
+        trap_pos = midpoint + np.array([random.choice([-0.1, 0.1]), 0.0, -0.05], dtype=np.float32)
+        yaw_2 = 0.0
+        size_2 = [0.02, 0.25, 0.04]
+        color_2 = [0.8, 0.8, 0.2, 1.0]
+    else:
+        y_shift = random.uniform(-0.05, 0.05)
+        trap_pos = midpoint + np.array([0.05, y_shift, 0.0], dtype=np.float32)
+        trap_pos[2] = max(float(start_pos[2]), float(goal_pos[2])) + 0.15
+        yaw_2 = 0.0
+        size_2 = [0.1, 0.05, 0.1]
+        color_2 = [0.2, 0.8, 0.8, 1.0]
+
+    obstacles.append(
+        create_static_box(position=trap_pos.tolist(), half_extents=size_2, yaw=yaw_2, color=color_2)
+    )
+    return obstacles
+
+
+class Lite6Robot:
+    def __init__(self, pos, ori, urdf_path=None):
+        self.base_pos = pos
+        self.base_ori = p.getQuaternionFromEuler(ori)
+        self.eef_id = 6
+        self.arm_num_dofs = 6
+        self.arm_rest_poses = [0.0, -1.57, 1.57, 0.0, 0.0, 0.0]
+        self.max_velocity = 3.0
+        self.gripper_open = -0.04
+        self.gripper_grasp = -0.028
+        self.gripper_close = 0.0
+        self.urdf_path = self._resolve_urdf_path(urdf_path)
+
+    def _resolve_urdf_path(self, urdf_path):
+        if urdf_path is not None and os.path.exists(urdf_path):
+            return urdf_path
+
+        file_dir = os.path.dirname(__file__)
+        candidates = [
+            os.path.join(file_dir, "..", "..", "..", "..", "..", "robot-sim", "lite-6-updated-urdf", "lite_6_new.urdf"),
+            os.path.join(file_dir, "..", "..", "..", "..", "lite-6-updated-urdf", "lite_6_new.urdf"),
+            "./lite-6-updated-urdf/lite_6_new.urdf",
+        ]
+        for path in candidates:
+            norm = os.path.abspath(path)
+            if os.path.exists(norm):
+                return norm
+        raise FileNotFoundError("Could not resolve lite_6_new.urdf path. Please pass urdf_path explicitly.")
+
+    def load(self):
+        self.id = p.loadURDF(
+            self.urdf_path,
+            self.base_pos,
+            self.base_ori,
+            useFixedBase=True,
+        )
+        self._parse_joint_info()
+        self._setup_mimic_joints()
+
+    def _parse_joint_info(self):
+        self.joints = []
+        self.controllable_joints = []
+        for i in range(p.getNumJoints(self.id)):
+            info = p.getJointInfo(self.id, i)
+            controllable = info[2] != p.JOINT_FIXED
+            if controllable:
+                self.controllable_joints.append(i)
+            self.joints.append(info)
+
+        self.arm_controllable_joints = self.controllable_joints[: self.arm_num_dofs]
+        self.arm_lower_limits = [p.getJointInfo(self.id, j)[8] for j in self.arm_controllable_joints]
+        self.arm_upper_limits = [p.getJointInfo(self.id, j)[9] for j in self.arm_controllable_joints]
+
+    def _setup_mimic_joints(self):
+        joint_name_to_id = {p.getJointInfo(self.id, i)[1].decode("utf-8"): i for i in range(p.getNumJoints(self.id))}
+        self.mimic_parent_id = joint_name_to_id.get("left_finger_joint", None)
+        self.mimic_child_multiplier = {}
+        right_id = joint_name_to_id.get("right_finger_joint", None)
+        if self.mimic_parent_id is None or right_id is None:
+            raise RuntimeError("Lite6 gripper joints not found in URDF.")
+        self.mimic_child_multiplier[right_id] = 1
+
+        for joint_id, multiplier in self.mimic_child_multiplier.items():
+            c = p.createConstraint(
+                self.id,
+                self.mimic_parent_id,
+                self.id,
+                joint_id,
+                jointType=p.JOINT_GEAR,
+                jointAxis=[0, 1, 0],
+                parentFramePosition=[0, 0, 0],
+                childFramePosition=[0, 0, 0],
+            )
+            p.changeConstraint(c, gearRatio=-multiplier, maxForce=100, erp=1)
+
+    def reset_posture(self):
+        for i, joint_id in enumerate(self.arm_controllable_joints):
+            p.resetJointState(self.id, joint_id, self.arm_rest_poses[i])
+        self.set_gripper_normalized(0.0)
+        for _ in range(100):
+            p.stepSimulation()
+
+    def set_arm_joints(self, target_joints):
+        for i, joint_id in enumerate(self.arm_controllable_joints):
+            p.setJointMotorControl2(
+                self.id,
+                joint_id,
+                p.POSITION_CONTROL,
+                targetPosition=float(target_joints[i]),
+                maxVelocity=self.max_velocity,
+                force=200,
+            )
+
+    def set_gripper_normalized(self, gripper_norm):
+        gripper_norm = float(np.clip(gripper_norm, 0.0, 1.0))
+        target = self.gripper_open + gripper_norm * (self.gripper_grasp - self.gripper_open)
+        p.setJointMotorControl2(
+            self.id,
+            self.mimic_parent_id,
+            p.POSITION_CONTROL,
+            targetPosition=target,
+            force=500,
+            maxVelocity=2.0,
+        )
+
+    def move_gripper_delta(self, delta):
+        curr_norm = self.get_robot_state()[-1]
+        self.set_gripper_normalized(curr_norm + float(delta))
+
+    def get_robot_state(self):
+        arm = [p.getJointState(self.id, j)[0] for j in self.arm_controllable_joints]
+        raw_gripper = p.getJointState(self.id, self.mimic_parent_id)[0]
+        denom = (self.gripper_grasp - self.gripper_open)
+        if abs(denom) < 1e-6:
+            norm = 0.0
+        else:
+            norm = (raw_gripper - self.gripper_open) / denom
+        norm = float(np.clip(norm, 0.0, 1.0))
+        return np.asarray(arm + [norm], dtype=np.float32)
+
+    def get_eef_position(self):
+        return np.asarray(p.getLinkState(self.id, self.eef_id)[0], dtype=np.float32)
+
+
+class Lite6MotionPlanningEnv(gym.Env):
+    metadata = {"render.modes": ["rgb_array"], "video.frames_per_second": 10}
+
+    def __init__(
+        self,
+        use_gui=False,
+        num_points=5000,
+        image_size=224,
+        action_dim=7,
+        max_steps=350,
+        urdf_path=None,
+        collision_terminate=False,
+        success_threshold=0.03,
+        obs_config=None,
+        max_steps_per_waypoint=10,
+        waypoint_threshold=0.01,
+    ):
+        self.use_gui = use_gui
+        self.num_points = num_points
+        self.image_size = image_size
+        self.action_dim = action_dim
+        self.max_steps = max_steps
+        self.current_step = 0
+        self.collision_terminate = collision_terminate
+        self.success_threshold = success_threshold
+        self.obs_config = obs_config or {}
+        self.max_steps_per_waypoint = max_steps_per_waypoint
+        self.waypoint_threshold = waypoint_threshold
+
+        self.physics_client = p.connect(p.GUI if use_gui else p.DIRECT)
+        p.setGravity(0, 0, -9.8)
+        p.setAdditionalSearchPath(pybullet_data.getDataPath())
+
+        self.plane_id = p.loadURDF("plane.urdf", [0, 0, 0], useMaximalCoordinates=True)
+        self.table_id = p.loadURDF("table/table.urdf", [0.5, 0, 0], p.getQuaternionFromEuler([0, 0, 0]))
+
+        self.robot = Lite6Robot([0, 0, 0.62], [0, 0, 0], urdf_path=urdf_path)
+        self.robot.load()
+
+        self.goal_eef_xyz = np.array([0.3, 0.0, 0.8], dtype=np.float32)
+        self.start_eef_xyz = np.array([0.25, -0.2, 0.75], dtype=np.float32)
+        self.target_orn = p.getQuaternionFromEuler([-1.5708, 0, 1.5708])
+        self.obstacle_ids = []
+        self.collision_flag = False
+        self.is_success_flag = False
+        self.last_cam_frames = {}
+
+        self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(self.action_dim,), dtype=np.float32)
+        self.observation_space = spaces.Dict(
+            {
+                "point_cloud": spaces.Box(low=-np.inf, high=np.inf, shape=(self.num_points, 3), dtype=np.float32),
+                "agent_pos": spaces.Box(low=-np.inf, high=np.inf, shape=(7,), dtype=np.float32),
+                "goal_eef_xyz": spaces.Box(low=-np.inf, high=np.inf, shape=(3,), dtype=np.float32),
+                "image": spaces.Box(low=0, high=255, shape=(3, self.image_size, self.image_size), dtype=np.uint8),
+            }
+        )
+
+    def _capture_camera(self, cam_cfg):
+        view_matrix = p.computeViewMatrix(
+            cameraEyePosition=cam_cfg["eye"],
+            cameraTargetPosition=cam_cfg["target"],
+            cameraUpVector=cam_cfg["up"],
+        )
+        proj_matrix = p.computeProjectionMatrixFOV(fov=60, aspect=1.0, nearVal=0.01, farVal=3.0)
+        _, _, rgb_img, depth_img, seg_img = p.getCameraImage(
+            self.image_size,
+            self.image_size,
+            viewMatrix=view_matrix,
+            projectionMatrix=proj_matrix,
+            flags=p.ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX,
+        )
+        rgb = np.asarray(rgb_img)[:, :, :3]
+        depth = np.asarray(depth_img)
+        seg = np.asarray(seg_img)
+        return rgb, depth, seg, view_matrix, proj_matrix
+
+    def _build_point_cloud(self):
+        merged = []
+        exclude_ids = {self.table_id, self.plane_id}
+        for cam_cfg in _LITE6_MP_CAMERAS:
+            rgb, depth, seg, view_matrix, proj_matrix = self._capture_camera(cam_cfg)
+            self.last_cam_frames[cam_cfg["name"]] = rgb
+
+            points = _depth_to_point_cloud_base_frame(
+                depth,
+                view_matrix,
+                proj_matrix,
+                self.robot.base_pos,
+                width=self.image_size,
+                height=self.image_size,
+            )
+            points_flat = points.reshape(-1, 3)
+            seg_flat = seg.flatten()
+            depth_flat = depth.flatten()
+
+            valid = (depth_flat < 0.9999) & (points_flat[:, 2] < 2.5)
+            for obj_id in exclude_ids:
+                valid &= (seg_flat != obj_id)
+            filtered = points_flat[valid]
+            if filtered.size > 0:
+                merged.append(filtered)
+
+        if len(merged) == 0:
+            return np.zeros((self.num_points, 3), dtype=np.float32)
+
+        points = np.concatenate(merged, axis=0).astype(np.float32, copy=False)
+        return _normalize_point_count(points, self.num_points)
+
+    def _check_collision(self):
+        for body_id in [self.table_id] + list(self.obstacle_ids):
+            contacts = p.getContactPoints(self.robot.id, body_id)
+            for contact in contacts:
+                robot_link = contact[3]
+                if robot_link == -1:
+                    continue
+                return True
+        return False
+
+    def _get_obs(self):
+        pc = self._build_point_cloud()
+        state = self.robot.get_robot_state()
+        cam0 = self.last_cam_frames.get("thirdperson_cam00", np.zeros((self.image_size, self.image_size, 3), dtype=np.uint8))
+        return {
+            "point_cloud": pc.astype(np.float32),
+            "agent_pos": state.astype(np.float32),
+            "goal_eef_xyz": self.goal_eef_xyz.astype(np.float32),
+            "image": cam0.transpose(2, 0, 1).astype(np.uint8),
+        }
+
+    def reset(self, start_joint=None, goal_eef_xyz=None, cube_start_pos=None, cube_start_orn=None):
+        del start_joint, cube_start_pos, cube_start_orn
+        self.current_step = 0
+        self.collision_flag = False
+        self.is_success_flag = False
+
+        for obs_id in self.obstacle_ids:
+            try:
+                p.removeBody(obs_id)
+            except Exception:
+                pass
+        self.obstacle_ids = []
+
+        self.robot.reset_posture()
+
+        self.start_eef_xyz = np.array([0.25, -0.2, 0.75], dtype=np.float32)
+        self.goal_eef_xyz = np.array([
+            0.35 + np.random.uniform(-0.05, 0.0),
+            0.20 + np.random.uniform(-0.05, 0.05),
+            0.75 + float(np.random.uniform(-0.05, 0.2, size=1)[0]),
+        ], dtype=np.float32)
+
+        self.obstacle_ids = generate_task_obstacles(
+            self.start_eef_xyz.tolist(),
+            self.goal_eef_xyz.tolist(),
+            self.obs_config,
+        )
+
+        start_joint_target = p.calculateInverseKinematics(
+            self.robot.id,
+            self.robot.eef_id,
+            self.start_eef_xyz.tolist(),
+            self.target_orn,
+            lowerLimits=self.robot.arm_lower_limits,
+            upperLimits=self.robot.arm_upper_limits,
+            jointRanges=self.robot.arm_joint_ranges,
+            restPoses=self.robot.arm_rest_poses,
+            maxNumIterations=100,
+            residualThreshold=1e-5,
+        )
+        for i, joint_id in enumerate(self.robot.arm_controllable_joints):
+            p.resetJointState(self.robot.id, joint_id, start_joint_target[i], targetVelocity=0)
+            p.setJointMotorControl2(
+                self.robot.id,
+                joint_id,
+                p.POSITION_CONTROL,
+                targetPosition=start_joint_target[i],
+                force=1000,
+            )
+        self.robot.set_gripper_normalized(0.0)
+        for _ in range(120):
+            p.stepSimulation()
+
+        return self._get_obs()
+
+    def step(self, action):
+        self.current_step += 1
+        action = np.asarray(action, dtype=np.float32).reshape(-1)
+        if action.shape[0] != 7:
+            raise ValueError(f"Lite6MotionPlanningEnv expects 7D action, got {action.shape}")
+
+        target_arm = action[:6]
+        gripper_delta = float(action[6])
+
+        self.robot.move_gripper_delta(gripper_delta)
+
+        collided = False
+        for _ in range(self.max_steps_per_waypoint):
+            for i, joint_id in enumerate(self.robot.arm_controllable_joints):
+                p.setJointMotorControl2(
+                    self.robot.id,
+                    joint_id,
+                    p.POSITION_CONTROL,
+                    targetPosition=float(target_arm[i]),
+                    force=150.0,
+                    maxVelocity=self.robot.max_velocity,
+                    positionGain=0.05,
+                    velocityGain=1.0,
+                )
+
+            for _ in range(1):
+                p.stepSimulation()
+
+            if self._check_collision():
+                collided = True
+                if self.collision_terminate:
+                    break
+
+            current_joint_pos = np.array(
+                [p.getJointState(self.robot.id, j)[0] for j in self.robot.arm_controllable_joints],
+                dtype=np.float32,
+            )
+            if np.max(np.abs(current_joint_pos - target_arm)) < self.waypoint_threshold:
+                break
+
+        self.collision_flag = self.collision_flag or collided
+
+        eef_pos = self.robot.get_eef_position()
+        goal_dist = float(np.linalg.norm(eef_pos - self.goal_eef_xyz))
+        reached = goal_dist <= self.success_threshold
+        self.is_success_flag = reached and (not self.collision_flag)
+
+        reward = 1.0 if self.is_success_flag else 0.0
+        done = self.is_success_flag or (self.current_step >= self.max_steps)
+        if self.collision_terminate and collided:
+            done = True
+
+        obs = self._get_obs()
+        info = {
+            "is_success": self.is_success_flag,
+            "collision": collided,
+            "collision_ever": self.collision_flag,
+            "goal_dist": goal_dist,
+        }
+        return obs, reward, done, info
+
+    def render_camera(self, camera_index=0):
+        camera_index = int(np.clip(camera_index, 0, len(_LITE6_MP_CAMERAS) - 1))
+        cam_cfg = _LITE6_MP_CAMERAS[camera_index]
+        rgb, _, _, _, _ = self._capture_camera(cam_cfg)
+        return rgb.astype(np.uint8)
+
+    def render(self, mode="rgb_array"):
+        del mode
+        return self.render_camera(0)
+
+    def close(self):
+        p.disconnect(self.physics_client)
+
+    def is_success(self):
+        return self.is_success_flag
+
+    def seed(self, seed=None):
         if seed is None:
             seed = np.random.randint(0, 25536)
         self._seed = seed

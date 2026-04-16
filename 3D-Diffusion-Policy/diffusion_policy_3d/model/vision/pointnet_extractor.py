@@ -169,6 +169,12 @@ class PointNetEncoderXYZ(nn.Module):
             self.mlp[0].register_forward_hook(self.save_input)
             self.mlp[6].register_forward_hook(self.save_feature)
             self.mlp[6].register_backward_hook(self.save_gradient)
+
+    def encode_points(self, x):
+        """Encode points with the shared point MLP and final projection, without pooling."""
+        x = self.mlp(x)
+        x = self.final_projection(x)
+        return x
          
          
     def forward(self, x):
@@ -210,17 +216,21 @@ class DP3Encoder(nn.Module):
                  pointcloud_encoder_cfg=None,
                  use_pc_color=False,
                  pointnet_type='pointnet',
+                 goal_key='goal_eef_xyz',
                  ):
         super().__init__()
         self.imagination_key = 'imagin_robot'
         self.state_key = 'agent_pos'
         self.point_cloud_key = 'point_cloud'
+        self.goal_key = goal_key
         self.rgb_image_key = 'image'
         self.n_output_channels = out_channel
         
         self.use_imagined_robot = self.imagination_key in observation_space.keys()
+        self.use_goal_point = self.goal_key in observation_space.keys()
         self.point_cloud_shape = observation_space[self.point_cloud_key]
         self.state_shape = observation_space[self.state_key]
+        self.goal_shape = observation_space[self.goal_key] if self.use_goal_point else None
         if self.use_imagined_robot:
             self.imagination_shape = observation_space[self.imagination_key]
         else:
@@ -230,6 +240,7 @@ class DP3Encoder(nn.Module):
         
         cprint(f"[DP3Encoder] point cloud shape: {self.point_cloud_shape}", "yellow")
         cprint(f"[DP3Encoder] state shape: {self.state_shape}", "yellow")
+        cprint(f"[DP3Encoder] goal shape: {self.goal_shape}", "yellow")
         cprint(f"[DP3Encoder] imagination point shape: {self.imagination_shape}", "yellow")
         
 
@@ -257,6 +268,17 @@ class DP3Encoder(nn.Module):
         self.n_output_channels  += output_dim
         self.state_mlp = nn.Sequential(*create_mlp(self.state_shape[0], output_dim, net_arch, state_mlp_activation_fn))
 
+        self.goal_mlp = None
+        if self.use_goal_point:
+            self.goal_mlp = self.extractor.mlp
+            if hasattr(pointcloud_encoder_cfg, "out_channels"):
+                goal_output_dim = int(pointcloud_encoder_cfg.out_channels)
+            elif isinstance(pointcloud_encoder_cfg, dict) and "out_channels" in pointcloud_encoder_cfg:
+                goal_output_dim = int(pointcloud_encoder_cfg["out_channels"])
+            else:
+                goal_output_dim = out_channel
+            self.n_output_channels += goal_output_dim
+
         cprint(f"[DP3Encoder] output dim: {self.n_output_channels}", "red")
 
 
@@ -273,7 +295,16 @@ class DP3Encoder(nn.Module):
             
         state = observations[self.state_key]
         state_feat = self.state_mlp(state)  # B * 64
-        final_feat = torch.cat([pn_feat, state_feat], dim=-1)
+        features = [pn_feat, state_feat]
+
+        if self.use_goal_point:
+            goal_point = observations[self.goal_key]
+            if goal_point.ndim == 2:
+                goal_point = goal_point.unsqueeze(1)
+            goal_feat = self.extractor.encode_points(goal_point).squeeze(1)
+            features.append(goal_feat)
+
+        final_feat = torch.cat(features, dim=-1)
         return final_feat
 
 
