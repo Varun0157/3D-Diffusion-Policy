@@ -10,6 +10,8 @@ from gym import spaces
 import random
 import time
 import os
+from collections import namedtuple
+
 
 
 def compute_workspace_bounds(pc_xyz, n_std=30):
@@ -926,65 +928,114 @@ def generate_task_obstacles(start_pos, goal_pos, obs_config):
     )
     return obstacles
 
-
 class Lite6Robot:
-    def __init__(self, pos, ori, urdf_path=None):
+    def __init__(self, pos, ori):
         self.base_pos = pos
         self.base_ori = p.getQuaternionFromEuler(ori)
+        # link_eef index: in lite_6_new.urdf, link_eef is index 6 (joint_eef)
+        # joint indices: 0..5 are arm joints, 6 is joint_eef
         self.eef_id = 6
         self.arm_num_dofs = 6
-        self.arm_rest_poses = [0.0, -1.57, 1.57, 0.0, 0.0, 0.0]
-        self.max_velocity = 3.0
-        self.gripper_open = -0.04
-        self.gripper_grasp = -0.028
-        self.gripper_close = 0.0
-        self.urdf_path = self._resolve_urdf_path(urdf_path)
-
-    def _resolve_urdf_path(self, urdf_path):
-        if urdf_path is not None and os.path.exists(urdf_path):
-            return urdf_path
-
-        file_dir = os.path.dirname(__file__)
-        default_path = os.path.join(file_dir, "lite-6-updated-urdf", "lite_6_new.urdf")
-        if os.path.exists(default_path):
-            return default_path
-        raise FileNotFoundError(
-            f"Could not resolve Lite6 URDF at {default_path}. Pass urdf_path explicitly if needed."
-        )
+        # Lite6 rest poses - keeping similar to XArm for now, can be tuned
+        self.arm_rest_poses = [0.0, -1.57, 1.57, 0.0, 0.0, 0.0] 
+        self.gripper_range = [-0.04, 0.0] # Prismatic gripper, -0.04=Open, 0.0=Closed
+        self.max_velocity = 3
+        self.urdf_path = "./lite-6-updated-urdf/lite_6_new.urdf"
 
     def load(self):
         self.id = p.loadURDF(
-            self.urdf_path,
+            "./lite-6-updated-urdf/lite_6_new.urdf",
             self.base_pos,
             self.base_ori,
             useFixedBase=True,
         )
-        self._parse_joint_info()
-        self._setup_mimic_joints()
+        self.__parse_joint_info__()
+        self.__setup_mimic_joints__()
+        # self.__print_debug_info__()
 
-    def _parse_joint_info(self):
+    def __parse_joint_info__(self):
+        jointInfo = namedtuple(
+            "jointInfo",
+            [
+                "id",
+                "name",
+                "type",
+                "lowerLimit",
+                "upperLimit",
+                "maxForce",
+                "maxVelocity",
+                "controllable",
+            ],
+        )
         self.joints = []
         self.controllable_joints = []
         for i in range(p.getNumJoints(self.id)):
             info = p.getJointInfo(self.id, i)
-            controllable = info[2] != p.JOINT_FIXED
+            # print(f"Joint {i}: {info[1].decode('utf-8')}, Type: {info[2]}, Limits: [{info[8]}, {info[9]}], MaxForce: {info[10]}, MaxVelocity: {info[11]}")
+            jointID = info[0]
+            jointName = info[1].decode("utf-8")
+            jointType = info[2]
+            jointLowerLimit = info[8]
+            jointUpperLimit = info[9]
+            jointMaxForce = info[10]
+            jointMaxVelocity = info[11]
+            controllable = jointType != p.JOINT_FIXED
             if controllable:
-                self.controllable_joints.append(i)
-            self.joints.append(info)
-
+                self.controllable_joints.append(jointID)
+            self.joints.append(
+                jointInfo(
+                    jointID,
+                    jointName,
+                    jointType,
+                    jointLowerLimit,
+                    jointUpperLimit,
+                    jointMaxForce,
+                    jointMaxVelocity,
+                    controllable,
+                )
+            )
         self.arm_controllable_joints = self.controllable_joints[: self.arm_num_dofs]
-        self.arm_lower_limits = [p.getJointInfo(self.id, j)[8] for j in self.arm_controllable_joints]
-        self.arm_upper_limits = [p.getJointInfo(self.id, j)[9] for j in self.arm_controllable_joints]
+        self.arm_lower_limits = [j.lowerLimit for j in self.joints if j.controllable][
+            : self.arm_num_dofs
+        ]
+        self.arm_upper_limits = [j.upperLimit for j in self.joints if j.controllable][
+            : self.arm_num_dofs
+        ]
+        # Manually overriding base joint limits for better IK performance (can be tuned)
+        self.arm_lower_limits[0] = -1.7
+        self.arm_upper_limits[0] = 1.7
 
-    def _setup_mimic_joints(self):
-        joint_name_to_id = {p.getJointInfo(self.id, i)[1].decode("utf-8"): i for i in range(p.getNumJoints(self.id))}
-        self.mimic_parent_id = joint_name_to_id.get("left_finger_joint", None)
-        self.mimic_child_multiplier = {}
-        right_id = joint_name_to_id.get("right_finger_joint", None)
-        if self.mimic_parent_id is None or right_id is None:
-            raise RuntimeError("Lite6 gripper joints not found in URDF.")
-        self.mimic_child_multiplier[right_id] = 1
+        self.arm_joint_ranges = [
+            ul - ll for ul, ll in zip(self.arm_upper_limits, self.arm_lower_limits)
+        ]
 
+    def __setup_mimic_joints__(self):
+        """Setup mimic joints for Lite6 custom gripper"""
+        # Parent joint is the one we control directly
+        mimic_parent_name = "left_finger_joint"
+        # Children follow the parent
+        mimic_children_names = {
+            "right_finger_joint": 1, 
+        }
+
+        # Find parent joint ID
+        try:
+            self.mimic_parent_id = [
+                joint.id for joint in self.joints if joint.name == mimic_parent_name
+            ][0]
+        except IndexError:
+            print(f"Error: Could not find mimic parent joint '{mimic_parent_name}'")
+            # Fallback or exit? For now let it crash to debug
+            raise
+
+        # Store child joint info
+        self.mimic_child_multiplier = {
+            joint.id: mimic_children_names[joint.name]
+            for joint in self.joints
+            if joint.name in mimic_children_names
+        }
+
+        # Create constraints with strong force
         for joint_id, multiplier in self.mimic_child_multiplier.items():
             c = p.createConstraint(
                 self.id,
@@ -992,59 +1043,163 @@ class Lite6Robot:
                 self.id,
                 joint_id,
                 jointType=p.JOINT_GEAR,
-                jointAxis=[0, 1, 0],
+                jointAxis=[0, 1, 0], # Axis usually doesn't matter for GEAR, ratio does
                 parentFramePosition=[0, 0, 0],
                 childFramePosition=[0, 0, 0],
             )
-            p.changeConstraint(c, gearRatio=-multiplier, maxForce=100, erp=1)
+            # Prismatic to Prismatic gear ratio 1:1 usually works directly
+            # For GEAR constraint: jointB = jointA * gearRatio
+            # Here right_finger = left_finger * 1
+            p.changeConstraint(c, gearRatio=-multiplier, maxForce=100000, erp=1)
 
-    def reset_posture(self):
-        for i, joint_id in enumerate(self.arm_controllable_joints):
-            p.resetJointState(self.id, joint_id, self.arm_rest_poses[i])
-        self.set_gripper_normalized(0.0)
-        for _ in range(100):
-            p.stepSimulation()
+        # Increase friction for gripper pads to improve grasp
+        gripper_links = [self.mimic_parent_id] + list(self.mimic_child_multiplier.keys())
+        for link_id in gripper_links:
+            p.changeDynamics(
+                self.id,
+                link_id,
+                lateralFriction=5.0,
+                spinningFriction=5.0,
+                rollingFriction=5.0,
+            )
 
-    def set_arm_joints(self, target_joints):
+    def __print_debug_info__(self):
+        """Print debug info about joint mapping and eef position"""
+        print("\n" + "="*60)
+        print("ROBOT DEBUG INFO")
+        print("="*60)
+        jtype_names = {0: 'REVOLUTE', 1: 'PRISMATIC', 4: 'FIXED'}
+        for j in self.joints:
+            jtype = jtype_names.get(j.type, str(j.type))
+            ctrl = "CTRL" if j.controllable else "    "
+            print(f"  Joint {j.id:2d}: {j.name:<35s} ({jtype:<9s}) [{ctrl}]")
+        print(f"\nArm controllable joints: {self.arm_controllable_joints}")
+        print(f"Arm lower limits: {self.arm_lower_limits}")
+        print(f"Arm upper limits: {self.arm_upper_limits}")
+        print(f"EEF link index: {self.eef_id}")
+        eef_state = p.getLinkState(self.id, self.eef_id)
+        print(f"EEF position: {eef_state[0]}")
+        print(f"EEF orientation (quat): {eef_state[1]}")
+        print(f"Mimic parent (finger_joint) ID: {self.mimic_parent_id}")
+        print(f"Mimic children: {self.mimic_child_multiplier}")
+        print("="*60 + "\n")
+
+    def move_arm_ik(self, target_pos, target_orn):
+        joint_poses = p.calculateInverseKinematics(
+            self.id,
+            self.eef_id,
+            target_pos,
+            target_orn,
+            lowerLimits=self.arm_lower_limits,
+            upperLimits=self.arm_upper_limits,
+            jointRanges=self.arm_joint_ranges,
+            restPoses=self.arm_rest_poses,
+            maxNumIterations=100,
+            residualThreshold=1e-5
+        )
         for i, joint_id in enumerate(self.arm_controllable_joints):
             p.setJointMotorControl2(
                 self.id,
                 joint_id,
                 p.POSITION_CONTROL,
-                targetPosition=float(target_joints[i]),
+                joint_poses[i],
                 maxVelocity=self.max_velocity,
-                force=200,
             )
 
-    def set_gripper_normalized(self, gripper_norm):
-        gripper_norm = float(np.clip(gripper_norm, 0.0, 1.0))
-        target = self.gripper_open + gripper_norm * (self.gripper_grasp - self.gripper_open)
-        p.setJointMotorControl2(
+    def move_gripper(self, open_angle):
+        """
+        Move gripper to target angle.
+        
+        Args:
+            open_angle: Target position for left_finger_joint (meters)
+            open_angle: Target position for left_finger_joint (meters)
+                        0.0 = Closed (fingers touch)
+                        -0.04 = Open (fingers apart)
+                        -0.024 = Grasp (5cm box)
+        """
+        p.resetJointState(self.id, self.mimic_parent_id, open_angle)
+
+        for joint_id, multiplier in self.mimic_child_multiplier.items():
+            p.resetJointState(self.id, joint_id, open_angle * multiplier)
+
+        for _ in range(10):
+            p.stepSimulation()
+
+    def reset_posture(self):
+        """Robustly reset the robot to the initial pose and gripper open."""
+        # Initial reset posture
+        initial_pos_world = [0.125, 0.01, 0.62 + 0.377]
+        # Old orientation not considering the tcp axes
+        # initial_orn_world = p.getQuaternionFromEuler([3.14, 0, 0])
+        # Now considering the TCP orientation as well, which is rotated 90 degrees around Y from the base link
+        initial_orn_world = p.getQuaternionFromEuler([-1.5708,0, 1.5708])
+
+        # Reset joints to rest_poses FIRST
+        for i, joint_id in enumerate(self.arm_controllable_joints):
+            p.resetJointState(self.id, joint_id, self.arm_rest_poses[i], targetVelocity=0)
+
+        target_joint_positions = p.calculateInverseKinematics(
             self.id,
-            self.mimic_parent_id,
-            p.POSITION_CONTROL,
-            targetPosition=target,
-            force=500,
-            maxVelocity=2.0,
+            self.eef_id,
+            initial_pos_world,
+            initial_orn_world,
+            lowerLimits=self.arm_lower_limits,
+            upperLimits=self.arm_upper_limits,
+            jointRanges=self.arm_joint_ranges,
+            restPoses=self.arm_rest_poses,
         )
 
-    def move_gripper_delta(self, delta):
-        curr_norm = self.get_robot_state()[-1]
-        self.set_gripper_normalized(curr_norm + float(delta))
+        # Disable motor control during teleport to avoid fighting
+        for j in range(p.getNumJoints(self.id)):
+            p.setJointMotorControl2(self.id, j, p.VELOCITY_CONTROL, force=0)
+
+        for i, joint_id in enumerate(self.arm_controllable_joints):
+            p.resetJointState(self.id, joint_id, target_joint_positions[i], targetVelocity=0)
+            p.setJointMotorControl2(self.id, joint_id, p.POSITION_CONTROL, targetPosition=target_joint_positions[i], force=1000)
+
+        # Reset gripper joints to open (-0.04 for prismatic)
+        # NOTE: -val is Open
+        gripper_open_val = -0.04
+        p.resetJointState(self.id, self.mimic_parent_id, gripper_open_val, targetVelocity=0)
+        p.setJointMotorControl2(self.id, self.mimic_parent_id, p.POSITION_CONTROL, targetPosition=gripper_open_val, force=500)
+        
+        for joint_id, multiplier in self.mimic_child_multiplier.items():
+            p.resetJointState(self.id, joint_id, gripper_open_val * multiplier, targetVelocity=0)
+            p.setJointMotorControl2(self.id, joint_id, p.POSITION_CONTROL, targetPosition=gripper_open_val * multiplier, force=500)
+
+        # Settle physics
+        for _ in range(100):
+            p.stepSimulation()
+
+    def get_current_ee_position(self):
+        eef_state = p.getLinkState(self.id, self.eef_id)
+        return eef_state[0], eef_state[1]
 
     def get_robot_state(self):
-        arm = [p.getJointState(self.id, j)[0] for j in self.arm_controllable_joints]
-        raw_gripper = p.getJointState(self.id, self.mimic_parent_id)[0]
-        denom = (self.gripper_grasp - self.gripper_open)
-        if abs(denom) < 1e-6:
-            norm = 0.0
-        else:
-            norm = (raw_gripper - self.gripper_open) / denom
-        norm = float(np.clip(norm, 0.0, 1.0))
-        return np.asarray(arm + [norm], dtype=np.float32)
+        """Get robot state: 6 arm joints + 1 gripper normalized [0, 1]"""
+        joint_states = [p.getJointState(self.id, i)[0] for i in self.arm_controllable_joints]
 
-    def get_eef_position(self):
-        return np.asarray(p.getLinkState(self.id, self.eef_id)[0], dtype=np.float32)
+        # Get raw gripper angle (position in meters)
+        raw_gripper_pos = p.getJointState(self.id, self.mimic_parent_id)[0]
+
+        # User request: Map [Open, Grasp] to [0, 1].
+        # Open = -0.04 -> 0.0
+        # Grasp = -0.024 -> 1.0
+        # Anything tighter than -0.024 is capped at 1.0
+        
+        open_pos = -0.04
+        grasp_pos = -0.028 # Target close position for 5cm box
+        
+        if abs(grasp_pos - open_pos) < 1e-5:
+            normalized_gripper = 0.0
+        else:
+            normalized_gripper = (raw_gripper_pos - open_pos) / (grasp_pos - open_pos)
+        
+        normalized_gripper = min(max(normalized_gripper, 0.0), 1.0)
+
+        # Return only joint angles + gripper (7 dimensions)
+        state = np.concatenate([joint_states, [normalized_gripper]])
+        return state
 
 
 class Lite6MotionPlanningEnv(gym.Env):
@@ -1225,7 +1380,7 @@ class Lite6MotionPlanningEnv(gym.Env):
                 targetPosition=start_joint_target[i],
                 force=1000,
             )
-        self.robot.set_gripper_normalized(0.0)
+        self.robot.move_gripper(0.0)
         for _ in range(120):
             p.stepSimulation()
 
@@ -1240,7 +1395,7 @@ class Lite6MotionPlanningEnv(gym.Env):
         target_arm = action[:6]
         gripper_delta = float(action[6])
 
-        self.robot.move_gripper_delta(gripper_delta)
+        self.robot.move_gripper(gripper_delta)
 
         collided = False
         for _ in range(self.max_steps_per_waypoint):
