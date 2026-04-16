@@ -945,16 +945,12 @@ class Lite6Robot:
             return urdf_path
 
         file_dir = os.path.dirname(__file__)
-        candidates = [
-            os.path.join(file_dir, "..", "..", "..", "..", "..", "robot-sim", "lite-6-updated-urdf", "lite_6_new.urdf"),
-            os.path.join(file_dir, "..", "..", "..", "..", "lite-6-updated-urdf", "lite_6_new.urdf"),
-            "./lite-6-updated-urdf/lite_6_new.urdf",
-        ]
-        for path in candidates:
-            norm = os.path.abspath(path)
-            if os.path.exists(norm):
-                return norm
-        raise FileNotFoundError("Could not resolve lite_6_new.urdf path. Please pass urdf_path explicitly.")
+        default_path = os.path.join(file_dir, "lite-6-updated-urdf", "lite_6_new.urdf")
+        if os.path.exists(default_path):
+            return default_path
+        raise FileNotFoundError(
+            f"Could not resolve Lite6 URDF at {default_path}. Pass urdf_path explicitly if needed."
+        )
 
     def load(self):
         self.id = p.loadURDF(
